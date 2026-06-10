@@ -184,9 +184,11 @@ int main(int argc, char **argv) {
   ImFont *sans_font_bold = fonts->AddFontFromFileTTF("fonts/NotoSans-Bold.ttf", 22.0f);
   ImFont *mono_font_bold = fonts->AddFontFromFileTTF("fonts/JetBrainsMono-Bold.ttf", 22.0f);
 
-  ImHTML::FontFamily mono = {.Regular = mono_font, .Bold = mono_font_bold, .Italic = mono_font, .BoldItalic = mono_font_bold};
+  ImHTML::FontFamily mono = {
+      .Regular = mono_font, .Bold = mono_font_bold, .Italic = mono_font, .BoldItalic = mono_font_bold};
   config->FontFamilies["monospace"] = mono;
-  ImHTML::FontFamily sans = {.Regular = sans_font, .Bold = sans_font_bold, .Italic = sans_font, .BoldItalic = sans_font_bold};
+  ImHTML::FontFamily sans = {
+      .Regular = sans_font, .Bold = sans_font_bold, .Italic = sans_font, .BoldItalic = sans_font_bold};
   config->FontFamilies["sans-serif"] = sans;
 
   // Setup scaling

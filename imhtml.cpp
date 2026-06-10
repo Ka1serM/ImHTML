@@ -214,7 +214,9 @@ class BrowserContainer : public litehtml::document_container {
 
     ImFont* font = resolveFont(config, descr.family, font_style);
     if (font != nullptr) {
-      IMHTML_PRINTF("[ImHTML] Resolved font for weight=%i style=%i\n", static_cast<int>(descr.weight), static_cast<int>(descr.style));
+      IMHTML_PRINTF("[ImHTML] Resolved font for weight=%i style=%i\n",
+                    static_cast<int>(descr.weight),
+                    static_cast<int>(descr.style));
     } else {
       IMHTML_PRINTF("[ImHTML] Failed to resolve font\n");
     }
@@ -912,7 +914,8 @@ class BrowserContainer : public litehtml::document_container {
           if (tag != nullptr) {
             if (config.AllowHrefTooltips && std::string(tag) == "a" && (attr = el->get_attr("href")) != nullptr) {
               tooltip = std::string(attr);
-            } else if (config.AllowImgAltTooltips && std::string(tag) == "img" && (attr = el->get_attr("alt")) != nullptr) {
+            } else if (config.AllowImgAltTooltips && std::string(tag) == "img" &&
+                       (attr = el->get_attr("alt")) != nullptr) {
               tooltip = std::string(attr);
             }
           }
