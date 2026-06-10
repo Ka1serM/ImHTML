@@ -143,6 +143,7 @@ class BrowserContainer : public litehtml::document_container {
  private:
   ImVec2 bottomRight = ImVec2(0, 0);
   std::string title = "Browser";
+  std::string tooltip = "";
   std::string loadUrl = "";
   std::string currentUrl = "";
   std::vector<std::string> history = {};
@@ -158,6 +159,7 @@ class BrowserContainer : public litehtml::document_container {
     bottomRight.x = std::max(bottomRight.x, point.x);
     bottomRight.y = std::max(bottomRight.y, point.y);
   }
+  std::string get_tooltip() { return tooltip; }
   std::string get_title() { return title; }
   std::string pop_load_url() {
     if (loadUrl.empty()) {
@@ -211,6 +213,11 @@ class BrowserContainer : public litehtml::document_container {
     }
 
     ImFont* font = resolveFont(config, descr.family, font_style);
+    if (font != nullptr) {
+      IMHTML_PRINTF("[ImHTML] Resolved font for weight=%i style=%i\n", static_cast<int>(descr.weight), static_cast<int>(descr.style));
+    } else {
+      IMHTML_PRINTF("[ImHTML] Failed to resolve font\n");
+    }
 
     auto rf = std::make_unique<ResolvedFont>();
     rf->Font = font;
@@ -895,7 +902,27 @@ class BrowserContainer : public litehtml::document_container {
   }
 
   virtual void on_mouse_event(const litehtml::element::ptr& el, litehtml::mouse_event event) override {
-    // TODO
+    if (el != nullptr && ImGui::IsWindowHovered()) {
+      const char* attr = el->get_attr("tooltip");
+      if (event == litehtml::mouse_event_enter) {
+        if (attr != nullptr) {
+          tooltip = std::string(attr);
+        } else {
+          const char* tag = el->get_tagName();
+          if (tag != nullptr) {
+            if (config.AllowHrefTooltips && std::string(tag) == "a" && (attr = el->get_attr("href")) != nullptr) {
+              tooltip = std::string(attr);
+            } else if (config.AllowImgAltTooltips && std::string(tag) == "img" && (attr = el->get_attr("alt")) != nullptr) {
+              tooltip = std::string(attr);
+            }
+          }
+        }
+      } else if (event == litehtml::mouse_event_leave) {
+        tooltip = "";
+      }
+    } else {
+      tooltip = "";
+    }
   }
 
   virtual void draw_borders(litehtml::uint_ptr hdc, const litehtml::borders& borders,
@@ -1134,6 +1161,10 @@ bool Canvas(const char* id, const char* html, float width, std::string* clickedU
   const ImRect bb(ImGui::GetCursorScreenPos(), ImGui::GetCursorScreenPos() + state.container->get_bottom_right());
   ImGui::ItemSize(bb.GetSize());
   ImGui::ItemAdd(bb, ImGui::GetID(id));
+
+  if (!state.container->get_tooltip().empty()) {
+    ImGui::SetTooltip("%s", state.container->get_tooltip().c_str());
+  }
 
   if (std::string url = state.container->pop_load_url(); !url.empty()) {
     if (clickedURL) {

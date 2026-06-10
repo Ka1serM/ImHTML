@@ -41,6 +41,9 @@ struct FontFamily {
  * Configuration for the HTML renderer
  */
 struct Config {
+  bool AllowHrefTooltips = true;
+  bool AllowImgAltTooltips = true;
+
   float BaseFontSize = 16.0f;
 
   // fallback when not found in FontFamilies, or no specific family provided

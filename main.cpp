@@ -82,7 +82,7 @@ static std::string ReplaceAll(std::string str, const std::string &from, const st
 }
 
 // Main code
-int main(int, char **) {
+int main(int argc, char **argv) {
   glfwSetErrorCallback(GlfwErrorCallback);
   if (!glfwInit()) return 1;
 
@@ -138,6 +138,12 @@ int main(int, char **) {
   ImGui::StyleColorsLight();
 
   ImHTML::Config *config = ImHTML::GetConfig();
+  if (argc > 1) {
+    if (atoi(argv[1]) == 0) {
+      config->AllowHrefTooltips = false;
+      config->AllowImgAltTooltips = false;
+    }
+  }
 
   std::unordered_map<std::string, std::tuple<GLuint, ImHTML::ImageMeta>> image_cache;
 
@@ -175,10 +181,12 @@ int main(int, char **) {
   fonts->AddFontDefault();
   ImFont *sans_font = fonts->AddFontFromFileTTF("fonts/NotoSans-Regular.ttf", 18.0f);
   ImFont *mono_font = fonts->AddFontFromFileTTF("fonts/JetBrainsMono-Regular.ttf", 18.0f);
+  ImFont *sans_font_bold = fonts->AddFontFromFileTTF("fonts/NotoSans-Bold.ttf", 22.0f);
+  ImFont *mono_font_bold = fonts->AddFontFromFileTTF("fonts/JetBrainsMono-Bold.ttf", 22.0f);
 
-  ImHTML::FontFamily mono = {.Regular = mono_font, .Bold = mono_font, .Italic = mono_font, .BoldItalic = mono_font};
+  ImHTML::FontFamily mono = {.Regular = mono_font, .Bold = mono_font_bold, .Italic = mono_font, .BoldItalic = mono_font_bold};
   config->FontFamilies["monospace"] = mono;
-  ImHTML::FontFamily sans = {.Regular = sans_font, .Bold = sans_font, .Italic = sans_font, .BoldItalic = sans_font};
+  ImHTML::FontFamily sans = {.Regular = sans_font, .Bold = sans_font_bold, .Italic = sans_font, .BoldItalic = sans_font_bold};
   config->FontFamilies["sans-serif"] = sans;
 
   // Setup scaling
