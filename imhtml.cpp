@@ -1,13 +1,26 @@
 
 #include <chrono>
+#include <cctype>
+#include <cmath>
+#include <cstdint>
+#include <cstdlib>
+#include <cstdio>
+#include <deque>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <string>
+#include <string_view>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 #define IMGUI_DEFINE_MATH_OPERATORS
 
 #include "imgui.h"
 #include "imgui_internal.h"
+#include <inja/inja.hpp>
 #include "imhtml.hpp"
 #include "litehtml.h"
 #include "litehtml/render_item.h"
@@ -47,6 +60,8 @@ class CustomElement : public litehtml::html_tag {
 
   void draw_background(litehtml::uint_ptr hdc, litehtml::pixel_t x, litehtml::pixel_t y, const litehtml::position* clip,
                        const std::shared_ptr<litehtml::render_item>& ri) override;
+  void draw_end(litehtml::uint_ptr hdc, litehtml::pixel_t x, litehtml::pixel_t y,
+                const litehtml::position* clip, const std::shared_ptr<litehtml::render_item>& ri) override;
 };
 
 std::string DefaultFileLoader(const char* url, const char* baseurl) {
@@ -73,12 +88,12 @@ Config config = Config{
 
 std::vector<Config> configStack;
 std::unordered_map<std::string, CustomElementDrawFunction> customElements;
+std::unordered_map<std::string, CustomElementEndDrawFunction> customElementEndDraws;
+std::unordered_map<std::string, CustomElementHtmlFunction> customElementHtmls;
+ElementLayerTransformFunction elementLayerTransform;
 
-Config getCurrentConfig() {
-  if (configStack.empty()) {
-    return config;
-  }
-  return configStack.back();
+const Config* getCurrentConfigPtr() {
+  return configStack.empty() ? &config : &configStack.back();
 }
 
 static ImFont* getFontFromFamily(const FontFamily& family, FontStyle style) {
@@ -124,20 +139,193 @@ void CustomElement::draw_background(litehtml::uint_ptr hdc, litehtml::pixel_t x,
   litehtml::html_tag::draw_background(hdc, x, y, clip, ri);
 
   // ri->pos() is the element's own content box relative to its parent.
-  // x/y carry the accumulated offset from all ancestors.
-  // Together they give the absolute document position and correct size.
-  litehtml::position pos = ri->pos();
-  pos.x += x;
-  pos.y += y;
+  // x/y carry the accumulated offset from all ancestors. Custom controls
+  // need the complete border box, otherwise their ImGui hit target stops at
+  // the inside edge of the CSS padding/border while the visible control
+  // continues outside it.
+  litehtml::position content = ri->pos();
+  content.x += x;
+  content.y += y;
+  litehtml::position padding_box = content;
+  padding_box += ri->get_paddings();
+  litehtml::position border_box = padding_box;
+  border_box += ri->get_borders();
 
-  if (customElements.find(this->tag) != customElements.end()) {
+  if (const auto found = customElements.find(this->tag); found != customElements.end()) {
     ImVec2 cursor = ImGui::GetCursorScreenPos();
-    customElements[this->tag](
-        ImRect(cursor + ImVec2(pos.x, pos.y), cursor + ImVec2(pos.x + pos.width, pos.y + pos.height)),
-        this->attributes);
+    const auto to_screen_rect = [&cursor](const litehtml::position& position) {
+      return ImRect(cursor + ImVec2(position.x, position.y),
+                    cursor + ImVec2(position.x + position.width, position.y + position.height));
+    };
+    const litehtml::margins& padding = ri->get_paddings();
+    const litehtml::margins& border = ri->get_borders();
+    const litehtml::border_radiuses radii = this->css().get_borders().radius.calc_percents(
+        border_box.width, border_box.height);
+    const litehtml::web_color color = this->css().get_color();
+    NativeElementContext context;
+    context.border_box = to_screen_rect(border_box);
+    context.padding_box = to_screen_rect(padding_box);
+    context.content_box = to_screen_rect(content);
+    context.padding = ImVec4(static_cast<float>(padding.left), static_cast<float>(padding.top),
+                             static_cast<float>(padding.right), static_cast<float>(padding.bottom));
+    context.border_width = ImVec4(static_cast<float>(border.left), static_cast<float>(border.top),
+                                  static_cast<float>(border.right), static_cast<float>(border.bottom));
+    context.border_radius = ImVec4(static_cast<float>(radii.top_left_x), static_cast<float>(radii.top_right_x),
+                                   static_cast<float>(radii.bottom_right_x), static_cast<float>(radii.bottom_left_x));
+    context.font_size = static_cast<float>(this->css().get_font_metrics().font_size);
+    context.line_height = static_cast<float>(this->css().line_height().computed_value);
+    if (context.line_height <= 0.0f) context.line_height = static_cast<float>(this->css().get_font_metrics().height);
+    context.text_color = IM_COL32(color.red, color.green, color.blue, color.alpha);
+    found->second(context, this->attributes);
     ImGui::SetCursorScreenPos(cursor);
   }
 }
+
+void CustomElement::draw_end(litehtml::uint_ptr, litehtml::pixel_t, litehtml::pixel_t,
+                             const litehtml::position*, const std::shared_ptr<litehtml::render_item>&) {
+  const auto found = customElementEndDraws.find(this->tag);
+  if (found != customElementEndDraws.end() && found->second) found->second();
+}
+
+namespace {
+struct ScrollbarGeometry {
+  ImVec2 track_min;
+  ImVec2 track_max;
+  ImVec2 thumb_min;
+  ImVec2 thumb_max;
+};
+
+litehtml::web_color CssBackgroundColor(const litehtml::element* element) {
+  return element != nullptr ? element->css().get_bg().m_color : litehtml::web_color::transparent;
+}
+
+litehtml::web_color CssBorderColor(const litehtml::element* element) {
+  if (element == nullptr) return litehtml::web_color::transparent;
+  const auto& borders = element->css().get_borders();
+  if (borders.top.color.alpha != 0) return borders.top.color;
+  if (borders.right.color.alpha != 0) return borders.right.color;
+  if (borders.bottom.color.alpha != 0) return borders.bottom.color;
+  if (borders.left.color.alpha != 0) return borders.left.color;
+  return element->css().get_color();
+}
+
+struct ScrollbarColors {
+  litehtml::web_color thumb;
+  litehtml::web_color track;
+};
+
+ScrollbarColors CssScrollbarColors(const litehtml::element* element) {
+  if (element == nullptr) return {};
+  const auto& colors = element->css().get_scrollbar_colors();
+  if (!colors.auto_value) return {colors.thumb, colors.track};
+  return {CssBorderColor(element), CssBackgroundColor(element)};
+}
+
+struct ScrollbarVisualState {
+  const litehtml::element* dom_target = nullptr;
+  const litehtml::render_item* target = nullptr;
+  float opacity = 0.0f;
+  double visible_until = 0.0;
+};
+
+// ImDrawList::PushClipRect(..., true) does not clamp an empty intersection:
+// two valid, disjoint rectangles produce min > max and AddDrawCmd asserts.
+// Keep all ImHTML-created clips finite and ordered before they reach ImGui.
+void PushSafeClipRect(ImDrawList* draw_list, ImVec2 clip_min, ImVec2 clip_max, bool intersect = true) {
+  ImVec2 current_min(0.0f, 0.0f);
+  ImVec2 current_max(0.0f, 0.0f);
+  if (!draw_list->_ClipRectStack.empty()) {
+    current_min = draw_list->GetClipRectMin();
+    current_max = draw_list->GetClipRectMax();
+  }
+
+  const bool current_is_valid = std::isfinite(current_min.x) && std::isfinite(current_min.y) &&
+                                std::isfinite(current_max.x) && std::isfinite(current_max.y) &&
+                                current_min.x <= current_max.x && current_min.y <= current_max.y;
+  if (!current_is_valid) {
+    current_min = ImVec2(0.0f, 0.0f);
+    current_max = current_min;
+  }
+
+  if (!std::isfinite(clip_min.x) || !std::isfinite(clip_min.y) || !std::isfinite(clip_max.x) ||
+      !std::isfinite(clip_max.y)) {
+    clip_min = current_min;
+    clip_max = current_max;
+  } else {
+    // A negative-sized litehtml box is empty, not a rectangle whose corners
+    // should be swapped.
+    clip_max.x = std::max(clip_max.x, clip_min.x);
+    clip_max.y = std::max(clip_max.y, clip_min.y);
+  }
+
+  if (intersect) {
+    clip_min.x = std::max(clip_min.x, current_min.x);
+    clip_min.y = std::max(clip_min.y, current_min.y);
+    clip_max.x = std::min(clip_max.x, current_max.x);
+    clip_max.y = std::min(clip_max.y, current_max.y);
+  }
+
+  // Preserve the push/pop contract even for an empty intersection. ImGui
+  // accepts zero-area clips; it only rejects inverted ones.
+  clip_max.x = std::max(clip_max.x, clip_min.x);
+  clip_max.y = std::max(clip_max.y, clip_min.y);
+  draw_list->PushClipRect(clip_min, clip_max, false);
+}
+
+bool GetScrollbarGeometry(const litehtml::scroll_state& state, const ImVec2& origin, bool vertical,
+                          ScrollbarGeometry& geometry) {
+  const litehtml::position& lane = vertical ? state.vertical_scrollbar_box : state.horizontal_scrollbar_box;
+  const float width = static_cast<float>(lane.width);
+  const float height = static_cast<float>(lane.height);
+  if (width <= 0.0f || height <= 0.0f) return false;
+
+  // litehtml already reserves the native scrollbar lane. Use that computed
+  // layout box directly instead of introducing a second CSS-only scrollbar
+  // API in the backend.
+  const float thickness = vertical ? width : height;
+  const float end_inset = 0.0f;
+  const float minimum_thumb = 0.0f;
+
+  const ImVec2 box_min = origin + ImVec2(static_cast<float>(lane.x), static_cast<float>(lane.y));
+  const ImVec2 box_max = box_min + ImVec2(width, height);
+  const float viewport_width = std::max(1.0f, static_cast<float>(state.viewport_size.width));
+  const float viewport_height = std::max(1.0f, static_cast<float>(state.viewport_size.height));
+  if (vertical) {
+    const float track_top = box_min.y + end_inset;
+    const float track_bottom = box_max.y - end_inset;
+    const float track_height = track_bottom - track_top;
+    const float content_height = std::max(1.0f, static_cast<float>(state.content_size.height));
+    if (track_height <= 0.0f) return false;
+    const float thumb_height = std::min(track_height,
+                                        std::max(minimum_thumb, track_height * viewport_height / content_height));
+    const float travel = track_height - thumb_height;
+    const float scroll_ratio = static_cast<float>(state.top) / std::max(1.0f, static_cast<float>(state.max_top));
+    const float thumb_top = track_top + travel * ImClamp(scroll_ratio, 0.0f, 1.0f);
+    const float track_left = box_min.x + std::max(0.0f, (width - thickness) * 0.5f);
+    geometry.track_min = ImVec2(track_left, track_top);
+    geometry.track_max = ImVec2(track_left + std::min(thickness, width), track_bottom);
+    geometry.thumb_min = ImVec2(geometry.track_min.x, thumb_top);
+    geometry.thumb_max = ImVec2(geometry.track_max.x, thumb_top + thumb_height);
+  } else {
+    const float track_left = box_min.x + end_inset;
+    const float track_right = box_max.x - end_inset;
+    const float track_width = track_right - track_left;
+    const float content_width = std::max(1.0f, static_cast<float>(state.content_size.width));
+    if (track_width <= 0.0f) return false;
+    const float thumb_width = std::min(track_width,
+                                       std::max(minimum_thumb, track_width * viewport_width / content_width));
+    const float travel = track_width - thumb_width;
+    const float scroll_ratio = static_cast<float>(state.left) / std::max(1.0f, static_cast<float>(state.max_left));
+    const float thumb_left = track_left + travel * ImClamp(scroll_ratio, 0.0f, 1.0f);
+    const float track_top = box_min.y + std::max(0.0f, (height - thickness) * 0.5f);
+    geometry.track_min = ImVec2(track_left, track_top);
+    geometry.track_max = ImVec2(track_right, track_top + std::min(thickness, height));
+    geometry.thumb_min = ImVec2(thumb_left, geometry.track_min.y);
+    geometry.thumb_max = ImVec2(thumb_left + thumb_width, geometry.track_max.y);
+  }
+  return true;
+}
+}  // namespace
 
 class BrowserContainer : public litehtml::document_container {
  private:
@@ -147,8 +335,179 @@ class BrowserContainer : public litehtml::document_container {
   std::string loadUrl = "";
   std::string currentUrl = "";
   std::vector<std::string> history = {};
+  std::deque<std::string> pending_events;
+  std::string hovered_id;
   float width;
-  Config config;
+  const Config* config = nullptr;
+  // ImGui resets MouseCursor at the start of every frame, while litehtml's
+  // cursor callback only runs when its DOM hit-test runs. Remember the last
+  // cursor result so stationary body/control hover does not alternate between
+  // frames where that expensive hit-test is skipped.
+  ImGuiMouseCursor requested_cursor = ImGuiMouseCursor_Arrow;
+
+  static std::string element_id(const litehtml::element::ptr& element) {
+    for (auto current = element; current; current = current->parent()) {
+      const char* id = current->get_attr("id", "");
+      if (id != nullptr && id[0] != '\0') return id;
+    }
+    return {};
+  }
+
+  void queue_element_event(const char* event, const std::string& id) {
+    if (event != nullptr && !id.empty()) pending_events.push_back("event:" + std::string(event) + ":" + id);
+  }
+
+  struct ElementLayer {
+    bool active = false;
+    int vertex_start = 0;
+    int command_start = 0;
+    ImVec2 pivot = ImVec2(0.0f, 0.0f);
+    ImVec2 scale = ImVec2(1.0f, 1.0f);
+    float opacity = 1.0f;
+    float brightness = 1.0f;
+    ImVec4 parent_clip = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+  };
+
+  std::vector<ElementLayer> element_layers_;
+
+  static ImVec2 transform_point(const ImVec2& point, const ElementLayer& layer) {
+    return layer.pivot + ImVec2((point.x - layer.pivot.x) * layer.scale.x,
+                                (point.y - layer.pivot.y) * layer.scale.y);
+  }
+
+  static float clamp_scale_to_clip(float requested, float bounds_min, float bounds_max, float pivot,
+                                   float clip_min, float clip_max) {
+    if (requested <= 1.0f || bounds_max <= bounds_min) {
+      return requested;
+    }
+
+    float allowed = requested;
+    if (pivot > bounds_min) {
+      allowed = std::min(allowed, (pivot - clip_min) / (pivot - bounds_min));
+    }
+    if (bounds_max > pivot) {
+      allowed = std::min(allowed, (clip_max - pivot) / (bounds_max - pivot));
+    }
+    return std::max(0.001f, allowed);
+  }
+
+  static ImVec4 transform_clip_rect(const ImVec4& clip, const ElementLayer& layer) {
+    if (!std::isfinite(clip.x) || !std::isfinite(clip.y) || !std::isfinite(clip.z) || !std::isfinite(clip.w)) {
+      return clip;
+    }
+
+    const ImVec2 corners[] = {
+        transform_point(ImVec2(clip.x, clip.y), layer),
+        transform_point(ImVec2(clip.z, clip.y), layer),
+        transform_point(ImVec2(clip.z, clip.w), layer),
+        transform_point(ImVec2(clip.x, clip.w), layer),
+    };
+    ImVec4 transformed(corners[0].x, corners[0].y, corners[0].x, corners[0].y);
+    for (int i = 1; i < 4; ++i) {
+      transformed.x = std::min(transformed.x, corners[i].x);
+      transformed.y = std::min(transformed.y, corners[i].y);
+      transformed.z = std::max(transformed.z, corners[i].x);
+      transformed.w = std::max(transformed.w, corners[i].y);
+    }
+
+    transformed.x = std::max(transformed.x, layer.parent_clip.x);
+    transformed.y = std::max(transformed.y, layer.parent_clip.y);
+    transformed.z = std::min(transformed.z, layer.parent_clip.z);
+    transformed.w = std::min(transformed.w, layer.parent_clip.w);
+    if (transformed.z < transformed.x) {
+      transformed.z = transformed.x;
+    }
+    if (transformed.w < transformed.y) {
+      transformed.w = transformed.y;
+    }
+    return transformed;
+  }
+
+  static ImU32 transform_color(ImU32 color, const ElementLayer& layer) {
+    ImVec4 rgba = ImGui::ColorConvertU32ToFloat4(color);
+    rgba.x = ImClamp(rgba.x * layer.brightness, 0.0f, 1.0f);
+    rgba.y = ImClamp(rgba.y * layer.brightness, 0.0f, 1.0f);
+    rgba.z = ImClamp(rgba.z * layer.brightness, 0.0f, 1.0f);
+    rgba.w = ImClamp(rgba.w * layer.opacity, 0.0f, 1.0f);
+    return ImGui::ColorConvertFloat4ToU32(rgba);
+  }
+
+  static bool is_identity(const ElementLayerTransform& transform) {
+    return transform.Scale.x == 1.0f && transform.Scale.y == 1.0f && transform.Opacity == 1.0f &&
+           transform.Brightness == 1.0f;
+  }
+
+  static ImU32 scrollbar_color(ImU32 color, float opacity) {
+    const ImU32 alpha = static_cast<ImU32>(static_cast<float>((color >> IM_COL32_A_SHIFT) & 0xFFu) *
+                                               ImClamp(opacity, 0.0f, 1.0f) +
+                                           0.5f);
+    return (color & ~IM_COL32_A_MASK) | (alpha << IM_COL32_A_SHIFT);
+  }
+
+  static void draw_scrollbars(const std::vector<litehtml::scroll_state>& states,
+                              const std::vector<ScrollbarVisualState>& visuals, const ImVec2& origin) {
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    if (draw_list == nullptr) return;
+
+    for (std::size_t index = 0; index < states.size(); ++index) {
+      const float opacity = index < visuals.size() ? visuals[index].opacity : 0.0f;
+      if (opacity <= 0.001f) continue;
+      const litehtml::scroll_state& state = states[index];
+      const float left = static_cast<float>(state.scroll_box.x);
+      const float top = static_cast<float>(state.scroll_box.y);
+      const float width = static_cast<float>(state.scroll_box.width);
+      const float height = static_cast<float>(state.scroll_box.height);
+      ScrollbarGeometry vertical;
+      ScrollbarGeometry horizontal;
+      const bool has_vertical = GetScrollbarGeometry(state, origin, true, vertical);
+      const bool has_horizontal = GetScrollbarGeometry(state, origin, false, horizontal);
+      if ((!has_vertical && !has_horizontal) || width <= 0.0f || height <= 0.0f) continue;
+
+      const ImVec2 box_min = origin + ImVec2(left, top);
+      const ImVec2 box_max = box_min + ImVec2(width, height);
+      bool has_state_clip = false;
+      if (state.has_clip) {
+        const ImVec2 clip_min = origin + ImVec2(static_cast<float>(state.clip_box.x),
+                                                static_cast<float>(state.clip_box.y));
+        const ImVec2 clip_max = clip_min + ImVec2(static_cast<float>(state.clip_box.width),
+                                                  static_cast<float>(state.clip_box.height));
+        PushSafeClipRect(draw_list, clip_min, clip_max);
+        has_state_clip = true;
+      }
+      PushSafeClipRect(draw_list, box_min, box_max);
+
+      if (has_vertical) {
+        const float radius = (vertical.track_max.x - vertical.track_min.x) * 0.5f;
+        const auto scrollbar_colors = CssScrollbarColors(state.target.get());
+        draw_list->AddRectFilled(vertical.track_min, vertical.track_max,
+                                 scrollbar_color(IM_COL32(scrollbar_colors.track.red, scrollbar_colors.track.green,
+                                                          scrollbar_colors.track.blue, scrollbar_colors.track.alpha),
+                                                 opacity), radius);
+        draw_list->AddRectFilled(vertical.thumb_min, vertical.thumb_max,
+                                 scrollbar_color(IM_COL32(scrollbar_colors.thumb.red, scrollbar_colors.thumb.green,
+                                                          scrollbar_colors.thumb.blue, scrollbar_colors.thumb.alpha),
+                                                 opacity), radius);
+      }
+
+      if (has_horizontal) {
+        const float radius = (horizontal.track_max.y - horizontal.track_min.y) * 0.5f;
+        const auto scrollbar_colors = CssScrollbarColors(state.target.get());
+        draw_list->AddRectFilled(horizontal.track_min, horizontal.track_max,
+                                 scrollbar_color(IM_COL32(scrollbar_colors.track.red, scrollbar_colors.track.green,
+                                                          scrollbar_colors.track.blue, scrollbar_colors.track.alpha),
+                                                 opacity), radius);
+        draw_list->AddRectFilled(horizontal.thumb_min, horizontal.thumb_max,
+                                 scrollbar_color(IM_COL32(scrollbar_colors.thumb.red, scrollbar_colors.thumb.green,
+                                                          scrollbar_colors.thumb.blue, scrollbar_colors.thumb.alpha),
+                                                 opacity), radius);
+      }
+
+      draw_list->PopClipRect();
+      if (has_state_clip) {
+        draw_list->PopClipRect();
+      }
+    }
+  }
 
  public:
   BrowserContainer(float width) : width(width) {}
@@ -162,13 +521,17 @@ class BrowserContainer : public litehtml::document_container {
   std::string get_tooltip() { return tooltip; }
   std::string get_title() { return title; }
   std::string pop_load_url() {
-    if (loadUrl.empty()) {
-      return "";
+    if (!loadUrl.empty()) {
+      auto url = loadUrl;
+      loadUrl = "";
+      return url;
     }
-
-    auto url = loadUrl;
-    loadUrl = "";
-    return url;
+    if (!pending_events.empty()) {
+      auto event = std::move(pending_events.front());
+      pending_events.pop_front();
+      return event;
+    }
+    return "";
   }
   void go_back() {
     if (!history.empty()) {
@@ -180,7 +543,86 @@ class BrowserContainer : public litehtml::document_container {
   void set_current_url(std::string url) { currentUrl = url; }
   std::string get_current_url() { return currentUrl; }
   void refresh() { loadUrl = currentUrl; }
-  void set_config(Config config) { this->config = config; }
+  void set_config(const Config* value) { config = value; }
+  void apply_requested_cursor() const {
+    if (requested_cursor != ImGuiMouseCursor_Arrow && ImGui::IsWindowHovered()) {
+      ImGui::SetMouseCursor(requested_cursor);
+    }
+  }
+  litehtml::pixel_t get_scrollbar_size() const override {
+    return litehtml::pixel_t(litehtml::default_scrollbar_size_px);
+  }
+  litehtml::pixel_t get_scrollbar_gutter_size() const override { return litehtml::pixel_t(0); }
+  void paint_scrollbars(const std::vector<litehtml::scroll_state>& states,
+                        const std::vector<ScrollbarVisualState>& visuals, const ImVec2& origin) {
+    draw_scrollbars(states, visuals, origin);
+  }
+
+  virtual void begin_element_layer(const litehtml::element::ptr& element,
+                                    const litehtml::position& border_box) override {
+    ElementLayer layer;
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+    if (elementLayerTransform && draw_list != nullptr) {
+      const ImVec2 cursor = ImGui::GetCursorScreenPos();
+      const ImRect bounds(cursor + ImVec2(border_box.x, border_box.y),
+                          cursor + ImVec2(border_box.x + border_box.width, border_box.y + border_box.height));
+      const ElementLayerTransform transform = elementLayerTransform(element, bounds);
+      layer.opacity = std::isfinite(transform.Opacity) ? ImClamp(transform.Opacity, 0.0f, 1.0f) : 1.0f;
+      layer.brightness = std::isfinite(transform.Brightness) ? std::max(0.0f, transform.Brightness) : 1.0f;
+
+      if (!is_identity(transform)) {
+        layer.active = true;
+        layer.vertex_start = draw_list->VtxBuffer.Size;
+        draw_list->AddDrawCmd();
+        layer.command_start = draw_list->CmdBuffer.Size - 1;
+        layer.parent_clip = draw_list->CmdBuffer[layer.command_start].ClipRect;
+        const ImVec2 size = bounds.GetSize();
+        const ImVec2 origin(std::isfinite(transform.Origin.x) ? transform.Origin.x : 0.5f,
+                            std::isfinite(transform.Origin.y) ? transform.Origin.y : 0.5f);
+        layer.pivot = bounds.Min + ImVec2(size.x * origin.x, size.y * origin.y);
+        const float requested_scale_x =
+            std::isfinite(transform.Scale.x) ? std::max(0.001f, transform.Scale.x) : 1.0f;
+        const float requested_scale_y =
+            std::isfinite(transform.Scale.y) ? std::max(0.001f, transform.Scale.y) : 1.0f;
+        layer.scale.x = clamp_scale_to_clip(requested_scale_x, bounds.Min.x, bounds.Max.x, layer.pivot.x,
+                                            layer.parent_clip.x, layer.parent_clip.z);
+        layer.scale.y = clamp_scale_to_clip(requested_scale_y, bounds.Min.y, bounds.Max.y, layer.pivot.y,
+                                            layer.parent_clip.y, layer.parent_clip.w);
+      }
+    }
+
+    element_layers_.push_back(layer);
+  }
+
+  virtual void end_element_layer() override {
+    if (element_layers_.empty()) {
+      return;
+    }
+
+    const ElementLayer layer = element_layers_.back();
+    element_layers_.pop_back();
+    if (!layer.active) {
+      return;
+    }
+
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    if (draw_list == nullptr) {
+      return;
+    }
+
+    for (int i = layer.vertex_start; i < draw_list->VtxBuffer.Size; ++i) {
+      draw_list->VtxBuffer[i].pos = transform_point(draw_list->VtxBuffer[i].pos, layer);
+      draw_list->VtxBuffer[i].col = transform_color(draw_list->VtxBuffer[i].col, layer);
+    }
+    for (int i = layer.command_start; i < draw_list->CmdBuffer.Size; ++i) {
+      draw_list->CmdBuffer[i].ClipRect = transform_clip_rect(draw_list->CmdBuffer[i].ClipRect, layer);
+    }
+
+    // Keep subsequent paint in an untransformed command. This also prevents
+    // a later primitive from merging into the transformed layer's command.
+    draw_list->AddDrawCmd();
+  }
 
   //
   // Font functions
@@ -194,7 +636,10 @@ class BrowserContainer : public litehtml::document_container {
     litehtml::font_metrics Metrics{};
   };
 
-  std::vector<std::unique_ptr<ResolvedFont>> fonts_;
+  // Documents call delete_font() when they release a font handle. Indexing
+  // ownership by handle prevents repeated document rebuilds from leaking the
+  // container's resolved-font allocations.
+  std::unordered_map<litehtml::uint_ptr, std::unique_ptr<ResolvedFont>> fonts_;
 
   static ResolvedFont* from_handle(litehtml::uint_ptr hFont) { return reinterpret_cast<ResolvedFont*>(hFont); }
 
@@ -212,7 +657,7 @@ class BrowserContainer : public litehtml::document_container {
       font_style = FontStyle::Italic;
     }
 
-    ImFont* font = resolveFont(config, descr.family, font_style);
+    ImFont* font = resolveFont(*config, descr.family, font_style);
     if (font != nullptr) {
       IMHTML_PRINTF("[ImHTML] Resolved font for weight=%i style=%i\n",
                     static_cast<int>(descr.weight),
@@ -228,7 +673,7 @@ class BrowserContainer : public litehtml::document_container {
     rf->Size = descr.size;
 
     const float base_size = font ? font->GetFontBaked(descr.size)->Size : ImGui::GetFontSize();
-    const float scale = base_size > 0.0f ? (descr.size / base_size) : 1.0f;
+    const float scale = base_size > 0.0f ? (static_cast<float>(descr.size) / base_size) : 1.0f;
 
     rf->Metrics.font_size = (int)descr.size;
     rf->Metrics.height = (int)(base_size * scale);
@@ -241,12 +686,13 @@ class BrowserContainer : public litehtml::document_container {
     }
 
     ResolvedFont* raw = rf.get();
-    fonts_.push_back(std::move(rf));
-    return reinterpret_cast<litehtml::uint_ptr>(raw);
+    const litehtml::uint_ptr handle = reinterpret_cast<litehtml::uint_ptr>(raw);
+    fonts_.emplace(handle, std::move(rf));
+    return handle;
   }
 
   virtual void delete_font(litehtml::uint_ptr hFont) override {
-    // do nothing for now
+    fonts_.erase(hFont);
   }
 
   virtual litehtml::pixel_t text_width(const char* text, litehtml::uint_ptr hFont) override {
@@ -282,7 +728,7 @@ class BrowserContainer : public litehtml::document_container {
   //
 
   virtual litehtml::pixel_t pt_to_px(float pt) const override { return pt; }
-  virtual litehtml::pixel_t get_default_font_size() const override { return config.BaseFontSize; }
+  virtual litehtml::pixel_t get_default_font_size() const override { return config->BaseFontSize; }
   virtual const char* get_default_font_name() const override { return "Default"; }
 
   //
@@ -344,35 +790,37 @@ class BrowserContainer : public litehtml::document_container {
   }
 
   virtual void load_image(const char* src, const char* baseurl, bool redraw_on_ready) override {
-    if (!config.LoadImage) {
+    if (!config->LoadImage) {
       return;
     }
 
-    config.LoadImage(src, baseurl);
+    config->LoadImage(src, baseurl);
   }
 
   virtual void get_image_size(const char* src, const char* baseurl, litehtml::size& sz) override {
-    if (!config.GetImageMeta) {
+    if (!config->GetImageMeta) {
       return;
     }
 
-    auto image_meta = config.GetImageMeta(src, baseurl);
+    auto image_meta = config->GetImageMeta(src, baseurl);
     sz.width = image_meta.Width;
     sz.height = image_meta.Height;
   }
 
   virtual void draw_image(litehtml::uint_ptr hdc, const litehtml::background_layer& layer, const std::string& url,
                           const std::string& base_url) override {
-    if (!config.GetImageTexture) {
-      return;
-    }
-
-    ImTextureID texture = config.GetImageTexture(url.c_str(), base_url.c_str());
-    if (!texture) {
+    if (!config->GetImageTexture) {
       return;
     }
 
     LayerGeometry lgm = this->get_layer_geometry(layer);
+    const int display_width = std::max(1, static_cast<int>(std::lround(lgm.border_max.x - lgm.border_min.x)));
+    const int display_height = std::max(1, static_cast<int>(std::lround(lgm.border_max.y - lgm.border_min.y)));
+    ImTextureID texture = config->GetImageTexture(url.c_str(), base_url.c_str(), display_width, display_height);
+    if (!texture) {
+      return;
+    }
+
     ImVec2 p_min = lgm.border_min;
     ImVec2 p_max = lgm.border_max;
 
@@ -380,7 +828,7 @@ class BrowserContainer : public litehtml::document_container {
 
     float radius = std::min({lgm.tl, lgm.tr, lgm.br, lgm.bl});
 
-    draw_list->PushClipRect(lgm.clip_min, lgm.clip_max, true);
+    PushSafeClipRect(draw_list, lgm.clip_min, lgm.clip_max);
 
     if (radius > 0.0f) {
       draw_list->AddImageRounded(texture, p_min, p_max, ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, lgm.tl);
@@ -402,7 +850,8 @@ class BrowserContainer : public litehtml::document_container {
     const litehtml::position& bg_box = layer.border_box;
     const litehtml::position& clip_box = layer.clip_box;
 
-    if (bg_box.width <= 0 || bg_box.height <= 0 || clip_box.width <= 0 || clip_box.height <= 0) {
+    if (bg_box.width <= litehtml::pixel_t(0) || bg_box.height <= litehtml::pixel_t(0) ||
+        clip_box.width <= litehtml::pixel_t(0) || clip_box.height <= litehtml::pixel_t(0)) {
       return;
     }
 
@@ -412,7 +861,7 @@ class BrowserContainer : public litehtml::document_container {
 
     ImU32 col = IM_COL32(color.red, color.green, color.blue, color.alpha);
 
-    draw_list->PushClipRect(lgm.clip_min, lgm.clip_max, true);
+    PushSafeClipRect(draw_list, lgm.clip_min, lgm.clip_max);
 
     if (lgm.tl == lgm.tr && lgm.tr == lgm.br && lgm.br == lgm.bl) {
       draw_list->AddRectFilled(lgm.border_min, lgm.border_max, col, lgm.tl);
@@ -854,7 +1303,8 @@ class BrowserContainer : public litehtml::document_container {
     const litehtml::position& bg_box = layer.border_box;
     const litehtml::position& clip_box = layer.clip_box;
 
-    if (bg_box.width <= 0 || bg_box.height <= 0 || clip_box.width <= 0 || clip_box.height <= 0) {
+    if (bg_box.width <= litehtml::pixel_t(0) || bg_box.height <= litehtml::pixel_t(0) ||
+        clip_box.width <= litehtml::pixel_t(0) || clip_box.height <= litehtml::pixel_t(0)) {
       return;
     }
 
@@ -865,7 +1315,7 @@ class BrowserContainer : public litehtml::document_container {
     LayerGeometry lgm = this->get_layer_geometry(layer);
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
-    draw_list->PushClipRect(lgm.clip_min, lgm.clip_max, true);
+    PushSafeClipRect(draw_list, lgm.clip_min, lgm.clip_max);
     draw_fn(lgm, gradient);
     draw_list->PopClipRect();
 
@@ -912,9 +1362,9 @@ class BrowserContainer : public litehtml::document_container {
         } else {
           const char* tag = el->get_tagName();
           if (tag != nullptr) {
-            if (config.AllowHrefTooltips && std::string(tag) == "a" && (attr = el->get_attr("href")) != nullptr) {
+            if (config->AllowHrefTooltips && std::string(tag) == "a" && (attr = el->get_attr("href")) != nullptr) {
               tooltip = std::string(attr);
-            } else if (config.AllowImgAltTooltips && std::string(tag) == "img" &&
+            } else if (config->AllowImgAltTooltips && std::string(tag) == "img" &&
                        (attr = el->get_attr("alt")) != nullptr) {
               tooltip = std::string(attr);
             }
@@ -925,6 +1375,34 @@ class BrowserContainer : public litehtml::document_container {
       }
     } else {
       tooltip = "";
+    }
+
+    // Emit enter/exit only when the resolved HTML id changes. Moving between
+    // children of one element must not produce a synthetic exit and re-enter.
+    if (event == litehtml::mouse_event_enter) {
+      const std::string id = element_id(el);
+      if (id != hovered_id) {
+        if (!hovered_id.empty()) queue_element_event("mouse-exit", hovered_id);
+        hovered_id = id;
+        if (!hovered_id.empty()) queue_element_event("mouse-enter", hovered_id);
+      }
+    } else if (event == litehtml::mouse_event_leave && !ImGui::IsWindowHovered()) {
+      if (!hovered_id.empty()) queue_element_event("mouse-exit", hovered_id);
+      hovered_id.clear();
+    }
+
+    // Recompute the requested cursor from the actual hit element so controls
+    // retain their pointer cursor without making the window drag zone alter it.
+    if (event == litehtml::mouse_event_enter && el != nullptr) {
+      const std::string cursor = el->css().get_cursor();
+      if (cursor == "pointer") {
+        requested_cursor = ImGuiMouseCursor_Hand;
+      } else {
+        requested_cursor = ImGuiMouseCursor_Arrow;
+      }
+      apply_requested_cursor();
+    } else if (event == litehtml::mouse_event_leave) {
+      requested_cursor = ImGuiMouseCursor_Arrow;
     }
   }
 
@@ -991,7 +1469,7 @@ class BrowserContainer : public litehtml::document_container {
       auto color32 = [](const litehtml::web_color& c) { return IM_COL32(c.red, c.green, c.blue, c.alpha); };
 
       // Top border
-      if (borders.top.width > 0) {
+      if (borders.top.width > litehtml::pixel_t(0)) {
         draw_list->AddQuadFilled(top_left,
                                  ImVec2(bottom_right.x, top_left.y),
                                  ImVec2(bottom_right.x - borders.right.width, top_left.y + borders.top.width),
@@ -1000,7 +1478,7 @@ class BrowserContainer : public litehtml::document_container {
       }
 
       // Bottom border
-      if (borders.bottom.width > 0) {
+      if (borders.bottom.width > litehtml::pixel_t(0)) {
         draw_list->AddQuadFilled(ImVec2(top_left.x + borders.left.width, bottom_right.y - borders.bottom.width),
                                  ImVec2(bottom_right.x - borders.right.width, bottom_right.y - borders.bottom.width),
                                  bottom_right,
@@ -1009,7 +1487,7 @@ class BrowserContainer : public litehtml::document_container {
       }
 
       // Left border
-      if (borders.left.width > 0) {
+      if (borders.left.width > litehtml::pixel_t(0)) {
         draw_list->AddQuadFilled(top_left,
                                  ImVec2(top_left.x + borders.left.width, top_left.y + borders.top.width),
                                  ImVec2(top_left.x + borders.left.width, bottom_right.y - borders.bottom.width),
@@ -1018,7 +1496,7 @@ class BrowserContainer : public litehtml::document_container {
       }
 
       // Right border
-      if (borders.right.width > 0) {
+      if (borders.right.width > litehtml::pixel_t(0)) {
         draw_list->AddQuadFilled(ImVec2(bottom_right.x - borders.right.width, top_left.y + borders.top.width),
                                  ImVec2(bottom_right.x, top_left.y),
                                  bottom_right,
@@ -1040,25 +1518,111 @@ class BrowserContainer : public litehtml::document_container {
     history.push_back(currentUrl);
     loadUrl = url;
   }
-  virtual void set_cursor(const char* cursor) override {
-    if (std::string(cursor) == "pointer" && ImGui::IsWindowHovered()) {
-      ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+  virtual bool on_element_click(const litehtml::element::ptr& element) override {
+    for (auto current = element; current; current = current->parent()) {
+      const char* tag = current->get_tagName();
+      if (tag != nullptr && std::strcmp(tag, "select") == 0) {
+        // HtmlApplication owns the native select popup and value commit. Keep the
+        // click from dispatching as an ordinary application command.
+        return true;
+      }
+      if (tag != nullptr && std::strcmp(tag, "input") == 0 &&
+          std::strcmp(current->get_attr("type", ""), "text") == 0) {
+        // Text fields are edited by HtmlApplication's shared HTML bridge. Do not
+        // bubble their release into a surrounding row or command.
+        return true;
+      }
     }
+    for (auto current = element; current; current = current->parent()) {
+      const char* tag = current->get_tagName();
+      if (tag != nullptr && std::strcmp(tag, "input") == 0 &&
+          std::strcmp(current->get_attr("type", ""), "range") == 0) {
+        // Range values are updated by HtmlApplication's drag handler. Returning
+        // true prevents a release from bubbling into a surrounding link or
+        // row click after the range has consumed the interaction.
+        return true;
+      }
+    }
+    for (auto current = element; current; current = current->parent()) {
+      const char* tag = current->get_tagName();
+      if (tag == nullptr || std::strcmp(tag, "input") != 0 ||
+          std::strcmp(current->get_attr("type", ""), "checkbox") != 0) {
+        continue;
+      }
+      const char* id = current->get_attr("id", "");
+      if (id[0] != '\0') {
+        loadUrl = "event:toggle:" + std::string(id);
+        return true;
+      }
+    }
+    for (auto current = element; current; current = current->parent()) {
+      const char* tag = current->get_tagName();
+      if (tag == nullptr || std::strcmp(tag, "label") != 0) continue;
+      const auto checkbox = current->select_one("input[type=checkbox]");
+      if (!checkbox) continue;
+      const char* id = checkbox->get_attr("id", "");
+      if (id[0] != '\0') {
+        loadUrl = "event:toggle:" + std::string(id);
+        return true;
+      }
+    }
+
+    // Native controls draw their HTML appearance and use a transparent ImGui
+    // hit target. Their ImGui handler already owns the interaction, so do not
+    // dispatch a second DOM click for the same mouse release. Switcher
+    // buttons were handled above and still use the HTML switcher path.
+    for (auto current = element; current; current = current->parent()) {
+      const char* tag = current->get_tagName();
+      if (tag != nullptr && customElements.find(tag) != customElements.end()) {
+        return true;
+      }
+    }
+
+    // The nearest identified element owns the click. A control can therefore
+    // prevent an enclosing selectable row from seeing the event without the
+    // renderer maintaining a whitelist of native or custom tag names.
+    for (auto current = element; current; current = current->parent()) {
+      const char* id = current->get_attr("id", "");
+      if (id == nullptr || id[0] == '\0') continue;
+      loadUrl = "event:click:" + std::string(id);
+      return true;
+    }
+    return false;
+  }
+  virtual void set_cursor(const char* cursor) override {
+    requested_cursor = ImGuiMouseCursor_Arrow;
+    if (cursor != nullptr && std::strcmp(cursor, "pointer") == 0) {
+      requested_cursor = ImGuiMouseCursor_Hand;
+    } else if (cursor != nullptr && std::strcmp(cursor, "move") == 0) {
+      requested_cursor = ImGuiMouseCursor_ResizeAll;
+    }
+    apply_requested_cursor();
   }
   virtual void transform_text(std::string& text, litehtml::text_transform tt) override {}
   virtual void import_css(std::string& text, const std::string& url, std::string& baseurl) override {
-    if (!config.LoadCSS) {
+    if (!config->LoadCSS) {
       return;
     }
-    text = config.LoadCSS(url.c_str(), baseurl.c_str());
+    text = config->LoadCSS(url.c_str(), baseurl.c_str());
   }
 
   //
   // Clipping functions
   //
 
-  virtual void set_clip(const litehtml::position& pos, const litehtml::border_radiuses& bdr_radius) override {}
-  virtual void del_clip() override {}
+  virtual void set_clip(const litehtml::position& pos, const litehtml::border_radiuses&) override {
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    if (draw_list == nullptr) return;
+    const ImVec2 cursor = ImGui::GetCursorScreenPos();
+    const ImVec2 clip_min = cursor + ImVec2(pos.x, pos.y);
+    const ImVec2 clip_max = clip_min + ImVec2(pos.width, pos.height);
+    PushSafeClipRect(draw_list, clip_min, clip_max);
+  }
+  virtual void del_clip() override {
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    if (draw_list == nullptr) return;
+    draw_list->PopClipRect();
+  }
 
   //
   // Layout functions
@@ -1073,6 +1637,13 @@ class BrowserContainer : public litehtml::document_container {
 
   virtual litehtml::element::ptr create_element(const char* tag_name, const litehtml::string_map& attributes,
                                                 const std::shared_ptr<litehtml::document>& doc) override {
+    if (std::strcmp(tag_name, "input") == 0) {
+      const auto type = attributes.find("type");
+      if (type != attributes.end() &&
+          (type->second == "checkbox" || type->second == "range" || type->second == "text")) {
+        return nullptr;
+      }
+    }
     if (customElements.find(tag_name) != customElements.end()) {
       return std::make_shared<CustomElement>(doc, tag_name, attributes);
     }
@@ -1090,7 +1661,7 @@ class BrowserContainer : public litehtml::document_container {
     media.type = litehtml::media_type_screen;
   }
 
-  virtual void get_language(litehtml::string& language, litehtml::string& culture) const override {
+  virtual void get_language(std::string& language, std::string& culture) const override {
     language = "en";
     culture = "US";
   }
@@ -1104,64 +1675,695 @@ void PopConfig() {
   configStack.pop_back();
 }
 
-void RegisterCustomElement(const char* tagName, CustomElementDrawFunction draw) { customElements[tagName] = draw; }
+void RegisterCustomElement(const char* tagName, CustomElementDrawFunction draw) { customElements[tagName] = std::move(draw); }
 
-void UnregisterCustomElement(const char* tagName) { customElements.erase(tagName); }
-
-bool Canvas(const char* id, const char* html, float width, std::string* clickedURL) {
-  struct state {
-    std::shared_ptr<BrowserContainer> container;
-    std::shared_ptr<litehtml::document> doc;
-    std::string html;
-    long long last_active_time;
+void RegisterCustomElement(const char* tagName, LegacyCustomElementDrawFunction draw) {
+  customElements[tagName] = [draw = std::move(draw)](const NativeElementContext& context,
+                                                     const std::map<std::string, std::string>& attributes) {
+    if (draw) draw(context.border_box, attributes);
   };
+}
 
-  static std::unordered_map<std::string, state> states = {};
+void RegisterCustomElementEnd(const char* tagName, CustomElementEndDrawFunction draw_end) {
+  customElementEndDraws[tagName] = std::move(draw_end);
+}
 
-  if (states.find(id) == states.end()) {
+void UnregisterCustomElement(const char* tagName) {
+  customElements.erase(tagName);
+  customElementEndDraws.erase(tagName);
+}
+
+void RegisterCustomElementHtml(const char* tagName, CustomElementHtmlFunction render_html) {
+  customElementHtmls[tagName] = std::move(render_html);
+}
+
+void UnregisterCustomElementHtml(const char* tagName) { customElementHtmls.erase(tagName); }
+
+namespace {
+
+bool IsAttributeSpace(char value) { return std::isspace(static_cast<unsigned char>(value)) != 0; }
+
+void ReplaceAll(std::string& value, std::string_view from, std::string_view to) {
+  std::size_t offset = 0;
+  while ((offset = value.find(from, offset)) != std::string::npos) {
+    value.replace(offset, from.size(), to);
+    offset += to.size();
+  }
+}
+
+std::string DecodeAttributeEntities(std::string value) {
+  ReplaceAll(value, "&amp;", "&");
+  ReplaceAll(value, "&quot;", "\"");
+  ReplaceAll(value, "&apos;", "'");
+  ReplaceAll(value, "&lt;", "<");
+  ReplaceAll(value, "&gt;", ">");
+  return value;
+}
+
+std::map<std::string, std::string> ParseCustomAttributes(std::string_view source) {
+  std::map<std::string, std::string> attributes;
+  std::size_t offset = 0;
+  while (offset < source.size()) {
+    while (offset < source.size() && (IsAttributeSpace(source[offset]) || source[offset] == '/')) ++offset;
+    if (offset >= source.size()) break;
+
+    const std::size_t name_start = offset;
+    while (offset < source.size() && !IsAttributeSpace(source[offset]) && source[offset] != '=' && source[offset] != '/') {
+      ++offset;
+    }
+    const std::string name(source.substr(name_start, offset - name_start));
+    while (offset < source.size() && IsAttributeSpace(source[offset])) ++offset;
+
+    std::string value;
+    bool has_value = false;
+    if (offset < source.size() && source[offset] == '=') {
+      has_value = true;
+      ++offset;
+      while (offset < source.size() && IsAttributeSpace(source[offset])) ++offset;
+      if (offset < source.size() && (source[offset] == '\"' || source[offset] == '\'')) {
+        const char quote = source[offset++];
+        const std::size_t value_start = offset;
+        while (offset < source.size() && source[offset] != quote) ++offset;
+        value = std::string(source.substr(value_start, offset - value_start));
+        if (offset < source.size()) ++offset;
+      } else {
+        const std::size_t value_start = offset;
+        while (offset < source.size() && !IsAttributeSpace(source[offset])) ++offset;
+        value = std::string(source.substr(value_start, offset - value_start));
+      }
+    }
+    if (!has_value) value = "true";
+    if (!name.empty()) attributes.emplace(name, DecodeAttributeEntities(std::move(value)));
+  }
+  return attributes;
+}
+
+std::size_t FindTagEnd(std::string_view source, std::size_t offset) {
+  char quote = 0;
+  for (; offset < source.size(); ++offset) {
+    const char value = source[offset];
+    if (quote != 0) {
+      if (value == quote) quote = 0;
+    } else if (value == '\"' || value == '\'') {
+      quote = value;
+    } else if (value == '>') {
+      return offset;
+    }
+  }
+  return std::string::npos;
+}
+
+struct ParsedTag {
+  std::string name;
+  std::map<std::string, std::string> attributes;
+  std::size_t end = std::string::npos;
+  bool closing = false;
+  bool self_closing = false;
+};
+
+bool IsVoidTag(std::string_view tag) {
+  for (const std::string_view name : {"area", "base", "br", "col", "embed", "hr", "img", "input", "link",
+                                      "meta", "param", "source", "track", "wbr"}) {
+    if (tag == name) return true;
+  }
+  return false;
+}
+
+bool ParseTag(std::string_view source, std::size_t start, ParsedTag& result) {
+  if (start >= source.size() || source[start] != '<') return false;
+  const std::size_t end = FindTagEnd(source, start + 1);
+  if (end == std::string::npos) return false;
+
+  std::size_t offset = start + 1;
+  if (offset < end && source[offset] == '/') {
+    result.closing = true;
+    ++offset;
+  }
+  while (offset < end && IsAttributeSpace(source[offset])) ++offset;
+  if (offset == end || source[offset] == '!' || source[offset] == '?') return false;
+
+  const std::size_t name_start = offset;
+  while (offset < end && !IsAttributeSpace(source[offset]) && source[offset] != '/' && source[offset] != '>') ++offset;
+  if (offset == name_start) return false;
+  result.name = source.substr(name_start, offset - name_start);
+  result.end = end;
+  if (result.closing) return true;
+
+  std::size_t attributes_end = end;
+  while (attributes_end > offset && IsAttributeSpace(source[attributes_end - 1])) --attributes_end;
+  result.self_closing = attributes_end > offset && source[attributes_end - 1] == '/';
+  if (result.self_closing) {
+    --attributes_end;
+    while (attributes_end > offset && IsAttributeSpace(source[attributes_end - 1])) --attributes_end;
+  }
+  result.attributes = ParseCustomAttributes(std::string_view(source).substr(offset, attributes_end - offset));
+  return true;
+}
+
+std::size_t FindMatchingTag(std::string_view source, const ParsedTag& opening) {
+  if (opening.self_closing || IsVoidTag(opening.name)) return std::string::npos;
+
+  int depth = 1;
+  std::size_t search = opening.end + 1;
+  while ((search = source.find('<', search)) != std::string::npos) {
+    ParsedTag candidate;
+    if (!ParseTag(source, search, candidate)) {
+      ++search;
+      continue;
+    }
+    if (candidate.name == opening.name) {
+      if (candidate.closing) {
+        if (--depth == 0) return search;
+      } else if (!candidate.self_closing && !IsVoidTag(candidate.name)) {
+        ++depth;
+      }
+    }
+    search = candidate.end + 1;
+  }
+  return std::string::npos;
+}
+
+std::string ExpandCustomElementRange(std::string_view source, std::string_view parent_tag,
+                                     const std::map<std::string, std::string>* parent_attributes,
+                                     const CustomElementHtmlFunction* template_renderer) {
+  std::string result;
+  std::size_t cursor = 0;
+  while (cursor < source.size()) {
+    const std::size_t open = source.find('<', cursor);
+    if (open == std::string_view::npos) {
+      result.append(source.substr(cursor));
+      break;
+    }
+    result.append(source.substr(cursor, open - cursor));
+
+    ParsedTag tag;
+    const std::size_t source_open = open;
+    if (!ParseTag(source, source_open, tag)) {
+      result.push_back(source[open]);
+      cursor = open + 1;
+      continue;
+    }
+    const std::size_t tag_size = tag.end - source_open + 1;
+    const auto custom = customElementHtmls.find(tag.name);
+    const bool is_template = tag.name == "template" && template_renderer != nullptr;
+    if (tag.closing || (!is_template && custom == customElementHtmls.end())) {
+      if (tag.closing || tag.self_closing || IsVoidTag(tag.name)) {
+        result.append(source.substr(open, tag_size));
+        cursor = open + tag_size;
+        continue;
+      }
+
+      const std::size_t close = FindMatchingTag(source, tag);
+      if (close == std::string::npos) {
+        result.append(source.substr(open));
+        break;
+      }
+      ParsedTag closing;
+      if (!ParseTag(source, close, closing)) {
+        result.append(source.substr(open));
+        break;
+      }
+      result.append(source.substr(open, tag_size));
+      result += ExpandCustomElementRange(source.substr(open + tag_size, close - open - tag_size), tag.name,
+                                         &tag.attributes, template_renderer);
+      const std::size_t close_size = closing.end - close + 1;
+      result.append(source.substr(close, close_size));
+      cursor = close + close_size;
+      continue;
+    }
+
+    std::string_view children;
+    std::size_t replacement_end = open + tag_size;
+    if (!tag.self_closing && !IsVoidTag(tag.name)) {
+      const std::size_t close = FindMatchingTag(source, tag);
+      if (close == std::string::npos) {
+        result.append(source.substr(open));
+        break;
+      }
+      ParsedTag closing;
+      if (!ParseTag(source, close, closing)) {
+        result.append(source.substr(open));
+        break;
+      }
+      children = source.substr(open + tag_size, close - open - tag_size);
+      replacement_end = closing.end + 1;
+    }
+
+    const std::string expanded_children =
+        ExpandCustomElementRange(children, tag.name, &tag.attributes, template_renderer);
+    const HtmlElementContext context{parent_tag, parent_attributes};
+    const std::string replacement = is_template ? (*template_renderer)(tag.attributes, expanded_children, context)
+                                                : custom->second(tag.attributes, expanded_children, context);
+    result += replacement;
+    cursor = replacement_end;
+  }
+  return result;
+}
+
+}  // namespace
+
+std::string ExpandCustomElements(const std::string& html) {
+  std::string expanded = html;
+  for (int pass = 0; pass < 8; ++pass) {
+    const std::string before = expanded;
+    expanded = ExpandCustomElementRange(expanded, {}, nullptr, nullptr);
+    const bool changed = expanded != before;
+    if (!changed) break;
+  }
+  return expanded;
+}
+
+std::string ExpandCustomElements(const std::string& html, CustomElementHtmlFunction template_renderer) {
+  std::string expanded = html;
+  for (int pass = 0; pass < 8; ++pass) {
+    const std::string before = expanded;
+    expanded = ExpandCustomElementRange(expanded, {}, nullptr, &template_renderer);
+    if (expanded == before) break;
+  }
+  return expanded;
+}
+
+std::string ExpandHtmlTemplate(std::string_view html_template,
+                               const std::map<std::string, std::string>& attributes) {
+  return ExpandHtmlTemplate(html_template, attributes, {});
+}
+
+namespace {
+struct InjaTemplateCache {
+  inja::Environment environment;
+  std::unordered_map<std::string, inja::Template> templates;
+
+  InjaTemplateCache() { environment.set_html_autoescape(false); }
+};
+
+InjaTemplateCache& GetInjaTemplateCache() {
+  static InjaTemplateCache cache;
+  return cache;
+}
+
+const inja::Template& GetInjaTemplate(std::string_view source) {
+  InjaTemplateCache& cache = GetInjaTemplateCache();
+  const std::string key(source);
+  const auto found = cache.templates.find(key);
+  if (found != cache.templates.end()) return found->second;
+  return cache.templates.emplace(key, cache.environment.parse(source)).first->second;
+}
+}  // namespace
+
+void PrepareHtmlTemplate(std::string_view html_template) { (void)GetInjaTemplate(html_template); }
+
+std::string ExpandHtmlTemplate(std::string_view html_template, const inja::json& data) {
+  return GetInjaTemplateCache().environment.render(GetInjaTemplate(html_template), data);
+}
+
+std::string ExpandHtmlTemplate(std::string_view html_template,
+                               const std::map<std::string, std::string>& attributes,
+                               std::string_view children) {
+  inja::json data = inja::json::object();
+  for (const auto& [name, value] : attributes) data[name] = value;
+  data["children"] = std::string(children);
+  return ExpandHtmlTemplate(html_template, data);
+}
+
+void RegisterElementLayerTransform(ElementLayerTransformFunction transform) {
+  elementLayerTransform = std::move(transform);
+}
+
+void UnregisterElementLayerTransform() { elementLayerTransform = {}; }
+
+namespace {
+struct CanvasState {
+  std::shared_ptr<BrowserContainer> container;
+  std::shared_ptr<litehtml::document> doc;
+  std::string html;
+  long long last_active_time;
+  int layout_width = -1;
+  int layout_height = -1;
+  bool layout_dirty = true;
+  std::shared_ptr<litehtml::render_item> active_scroll_target;
+  bool active_scroll_vertical = false;
+  float scroll_grab_offset = 0.0f;
+  // Reused across frames (cleared, not reallocated) so scroll-state queries
+  // do not churn the heap.
+  std::vector<litehtml::scroll_state> scroll_states;
+  // Indexed alongside scroll_states. Capacity survives frames, avoiding a
+  // map lookup and steady-state heap work for per-container fade state.
+  std::vector<ScrollbarVisualState> scrollbar_visual_states;
+  // Last position passed to on_mouse_over(), so a stationary cursor doesn't
+  // pay for a full render-tree hit test on every single idle frame.
+  float last_mouse_x = 0.0f;
+  float last_mouse_y = 0.0f;
+  bool has_mouse_position = false;
+  std::uint64_t frame_count = 0;
+  std::uint64_t parse_count = 0;
+  std::uint64_t layout_count = 0;
+  std::uint64_t full_invalidation_count = 0;
+  std::uint64_t layout_invalidation_count = 0;
+};
+
+std::unordered_map<std::string, CanvasState>& canvas_states() {
+  static std::unordered_map<std::string, CanvasState> states;
+  return states;
+}
+}  // namespace
+
+std::shared_ptr<litehtml::document> ParseDocument(const char* id, const char* html, float width) {
+  auto& states = canvas_states();
+  auto it = states.find(id);
+  bool reparsed = false;
+  if (it == states.end()) {
     auto container = std::make_shared<BrowserContainer>(width);
-    container->set_config(getCurrentConfig());
+    container->set_config(getCurrentConfigPtr());
     container->reset();
-    states[id] = state{
-        .container = container,
-        .doc = litehtml::document::createFromString(html, container.get()),
-        .html = html,
-        .last_active_time = std::chrono::high_resolution_clock::now().time_since_epoch().count(),
-    };
+    it = states
+             .emplace(id, CanvasState{
+                              .container = container,
+                              .doc = litehtml::document::createFromString(ExpandCustomElements(html), container.get()),
+                              .html = html,
+                             .last_active_time = std::chrono::high_resolution_clock::now().time_since_epoch().count(),
+                              .layout_dirty = true,
+                          })
+             .first;
+    reparsed = true;
+  } else if (it->second.html != html) {
+    // A caller that wants to keep mutating the same parsed DOM across frames
+    // (for example, a component that appends children directly instead of
+    // re-templating text)
+    // should pass the same source `html` every time — it's only reparsed
+    // when that source actually changes (e.g. the raw file on disk, not the
+    // mutated tree), so in-place DOM edits made after a previous ParseDocument
+    // call are never silently discarded here.
+    it->second.doc =
+        litehtml::document::createFromString(ExpandCustomElements(html), it->second.container.get());
+    it->second.html = html;
+    it->second.layout_width = -1;
+    it->second.layout_height = -1;
+    it->second.layout_dirty = true;
+    it->second.active_scroll_target.reset();
+    it->second.scrollbar_visual_states.clear();
+    reparsed = true;
   }
+  if (reparsed) ++it->second.parse_count;
+  it->second.last_active_time = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+  return it->second.doc;
+}
 
-  auto& state = states[id];
+void ResetDocument(const char* id) {
+  if (id == nullptr) return;
+  canvas_states().erase(id);
+}
 
-  if (state.html != html) {
-    state.doc = litehtml::document::createFromString(html, state.container.get());
-    state.html = html;
+bool RenderDocument(const char* id, float width, std::string* clickedURL) {
+  auto& states = canvas_states();
+  auto it = states.find(id);
+  if (it == states.end()) {
+    return false;
   }
-
+  CanvasState& state = it->second;
+  ++state.frame_count;
+  // A caller that keeps reusing an already-parsed document (calling this
+  // every frame without calling ParseDocument again each time) must still
+  // count as "active" — otherwise the cleanup pass below (or another
+  // canvas's cleanup pass, since all canvases share one states map) can
+  // erase this document while it's still the one currently being drawn one
+  // call frame up the stack (e.g. from inside a nested custom-element
+  // canvas), which is a use-after-free.
   state.last_active_time = std::chrono::high_resolution_clock::now().time_since_epoch().count();
 
-  state.container->set_config(getCurrentConfig());
+  state.container->set_config(getCurrentConfigPtr());
   state.container->reset();
 
-  int render_width = width > 0 ? (int)width : (int)ImGui::GetContentRegionAvail().x;
-  state.doc->render(render_width);
+  // Native/custom renderers may temporarily move ImGui's cursor while
+  // litehtml paints an element. Input coordinates must always be measured
+  // from the document's original origin, not whatever cursor position a
+  // renderer happened to leave behind.
+  const ImVec2 document_origin = ImGui::GetCursorScreenPos();
+  const ImVec2 document_available = ImGui::GetContentRegionAvail();
 
+  int render_width = width > 0 ? (int)width : (int)ImGui::GetContentRegionAvail().x;
+  int render_height = (int)document_available.y;
+  // Keep the immediate-mode paint/input pass, but avoid repeating the much
+  // more expensive layout pass when neither the document nor its available
+  // width or height changed. This mirrors ImGui's separation of persistent state from the
+  // per-frame command stream.
+  // Opt-in profiling hook for measuring layout independently of window-system
+  // resize timing. The environment is sampled once, so normal frames do not
+  // repeatedly query process state.
+  static const bool force_relayout = std::getenv("IMHTML_FORCE_RELAYOUT") != nullptr;
+  const bool did_relayout = force_relayout || state.layout_dirty || state.layout_width != render_width ||
+                            state.layout_height != render_height;
+  if (did_relayout) {
+    state.doc->render(render_width);
+    ++state.layout_count;
+    state.layout_width = render_width;
+    state.layout_height = render_height;
+    state.layout_dirty = false;
+  }
   litehtml::position clip(
       0, 0, render_width, std::max((int)state.doc->height(), (int)ImGui::GetContentRegionAvail().y));
+  // Reapply litehtml's last pointer decision before native/custom controls
+  // draw. A control with a more specific cursor (for example a splitter)
+  // can then override it later in this frame.
+  state.container->apply_requested_cursor();
   state.doc->draw(0, 0, 0, &clip);
 
-  auto x = ImGui::GetMousePos().x - ImGui::GetCursorScreenPos().x;
-  auto y = ImGui::GetMousePos().y - ImGui::GetCursorScreenPos().y;
+  // SDL reports the mouse position relative to the application viewport,
+  // while litehtml/custom elements use ImGui screen-space coordinates.
+  // Convert once here so links, scrolling, and native components all share
+  // the same input coordinate system even after the window is moved.
+  const ImVec2 mouse_pos = ImGui::GetMousePos();
+  const ImVec2 window_pos = ImGui::GetWindowPos();
+  const ImVec2 mouse(mouse_pos.x + window_pos.x, mouse_pos.y + window_pos.y);
+  auto x = mouse.x - document_origin.x;
+  auto y = mouse.y - document_origin.y;
 
-  litehtml::position::vector pos;
-  if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-    state.doc->on_lbutton_down(x, y, x, y, pos);
-  }
-  if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
-    state.doc->on_lbutton_up(x, y, x, y, pos);
-  }
-  state.doc->on_mouse_over(x, y, x, y, pos);
+  std::vector<litehtml::scroll_state>& scroll_states = state.scroll_states;
+  scroll_states.clear();
+  state.doc->get_scroll_states(scroll_states);
 
-  const ImRect bb(ImGui::GetCursorScreenPos(), ImGui::GetCursorScreenPos() + state.container->get_bottom_right());
+  const auto point_inside = [](const litehtml::position& box, float px, float py) {
+    return px >= static_cast<float>(box.x) && py >= static_cast<float>(box.y) &&
+           px < static_cast<float>(box.x + box.width) && py < static_cast<float>(box.y + box.height);
+  };
+
+  const auto rect_contains = [](const ImVec2& point, const ImVec2& min, const ImVec2& max) {
+    return point.x >= min.x && point.y >= min.y && point.x <= max.x && point.y <= max.y;
+  };
+  const auto point_in_scroll_clip = [&](const litehtml::scroll_state& scroll_state) {
+    return !scroll_state.has_clip || scroll_state.clip_box.is_point_inside(litehtml::pixel_t(x), litehtml::pixel_t(y));
+  };
+
+  // The document hit-test can stop at a nested control and therefore miss its
+  // scrollable ancestor. Prefer the exported scroll states so every scroll
+  // container gets an independent wheel target. States are traversed in
+  // reverse order so a nested container wins over its parent.
+  const ImGuiIO& io = ImGui::GetIO();
+  const bool wheel_scrolled = ImGui::IsWindowHovered() && (io.MouseWheel != 0.0f || io.MouseWheelH != 0.0f);
+  if (wheel_scrolled) {
+    constexpr float wheel_step = 40.0f;
+    const litehtml::pixel_t horizontal_delta(-io.MouseWheelH * wheel_step);
+    const litehtml::pixel_t vertical_delta(-io.MouseWheel * wheel_step);
+    bool horizontal_consumed = false;
+    bool vertical_consumed = false;
+
+    for (auto iter = scroll_states.rbegin(); iter != scroll_states.rend(); ++iter) {
+      const auto& scroll_state = *iter;
+      if (!scroll_state.render_target || !point_inside(scroll_state.scroll_box, x, y)) {
+        continue;
+      }
+      if (!horizontal_consumed && horizontal_delta != litehtml::pixel_t(0) && scroll_state.max_left > litehtml::pixel_t(0)) {
+        horizontal_consumed = scroll_state.render_target->h_scroll(horizontal_delta) != litehtml::pixel_t(0);
+      }
+      if (!vertical_consumed && vertical_delta != litehtml::pixel_t(0) && scroll_state.max_top > litehtml::pixel_t(0)) {
+        vertical_consumed = scroll_state.render_target->v_scroll(vertical_delta) != litehtml::pixel_t(0);
+      }
+      if (horizontal_consumed && vertical_consumed) {
+        break;
+      }
+    }
+
+    // Keep the existing litehtml routing as a fallback for an axis that did
+    // not find a movable exported state (for example when a container is at
+    // its edge and its parent can still consume the wheel).
+    state.doc->on_scroll(horizontal_consumed ? litehtml::pixel_t(0) : horizontal_delta,
+                         vertical_consumed ? litehtml::pixel_t(0) : vertical_delta, x, y, x, y);
+  }
+
+  bool scrollbar_input = false;
+  const auto apply_scrollbar_position = [&](const litehtml::scroll_state& scroll_state,
+                                             const ScrollbarGeometry& geometry, bool vertical,
+                                             float grab_offset) {
+    if (!scroll_state.render_target) {
+      return;
+    }
+    const float mouse_coordinate = vertical ? mouse.y : mouse.x;
+    const float track_start = vertical ? geometry.track_min.y : geometry.track_min.x;
+    const float track_end = vertical ? geometry.track_max.y : geometry.track_max.x;
+    const float thumb_size = vertical ? geometry.thumb_max.y - geometry.thumb_min.y
+                                      : geometry.thumb_max.x - geometry.thumb_min.x;
+    const float travel = std::max(0.0f, track_end - track_start - thumb_size);
+    if (travel <= 0.0f) {
+      return;
+    }
+    const float position = ImClamp(mouse_coordinate - grab_offset - track_start, 0.0f, travel);
+    const float ratio = position / travel;
+    const float maximum = static_cast<float>(vertical ? scroll_state.max_top : scroll_state.max_left);
+    const float current = static_cast<float>(vertical ? scroll_state.top : scroll_state.left);
+    const litehtml::pixel_t delta(ratio * maximum - current);
+    if (vertical) {
+      scroll_state.render_target->v_scroll(delta);
+    } else {
+      scroll_state.render_target->h_scroll(delta);
+    }
+  };
+
+  // Scrollbars are painted as part of the document draw list, so handle their
+  // mouse input here before passing the same button event to litehtml.
+  if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    for (auto iter = scroll_states.rbegin(); iter != scroll_states.rend() && !scrollbar_input; ++iter) {
+      const auto& scroll_state = *iter;
+      ScrollbarGeometry geometry;
+      if (GetScrollbarGeometry(scroll_state, document_origin, true, geometry) &&
+          point_in_scroll_clip(scroll_state) &&
+          rect_contains(mouse, geometry.track_min, geometry.track_max)) {
+        state.active_scroll_target = scroll_state.render_target;
+        state.active_scroll_vertical = true;
+        state.scroll_grab_offset = rect_contains(mouse, geometry.thumb_min, geometry.thumb_max)
+                                       ? mouse.y - geometry.thumb_min.y
+                                       : (geometry.thumb_max.y - geometry.thumb_min.y) * 0.5f;
+        if (!rect_contains(mouse, geometry.thumb_min, geometry.thumb_max)) {
+          apply_scrollbar_position(scroll_state, geometry, true, state.scroll_grab_offset);
+        }
+        scrollbar_input = true;
+        break;
+      }
+
+      if (GetScrollbarGeometry(scroll_state, document_origin, false, geometry) &&
+          point_in_scroll_clip(scroll_state) &&
+          rect_contains(mouse, geometry.track_min, geometry.track_max)) {
+        state.active_scroll_target = scroll_state.render_target;
+        state.active_scroll_vertical = false;
+        state.scroll_grab_offset = rect_contains(mouse, geometry.thumb_min, geometry.thumb_max)
+                                       ? mouse.x - geometry.thumb_min.x
+                                       : (geometry.thumb_max.x - geometry.thumb_min.x) * 0.5f;
+        if (!rect_contains(mouse, geometry.thumb_min, geometry.thumb_max)) {
+          apply_scrollbar_position(scroll_state, geometry, false, state.scroll_grab_offset);
+        }
+        scrollbar_input = true;
+        break;
+      }
+    }
+  }
+
+  if (state.active_scroll_target && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+    bool active_target_found = false;
+    for (const auto& scroll_state : scroll_states) {
+      if (scroll_state.render_target != state.active_scroll_target) {
+        continue;
+      }
+      ScrollbarGeometry geometry;
+      if (GetScrollbarGeometry(scroll_state, document_origin, state.active_scroll_vertical, geometry)) {
+        apply_scrollbar_position(scroll_state, geometry, state.active_scroll_vertical, state.scroll_grab_offset);
+        active_target_found = true;
+      }
+      break;
+    }
+    scrollbar_input = true;
+    if (!active_target_found) {
+      state.active_scroll_target.reset();
+    }
+  }
+
+  if (state.active_scroll_target && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+    scrollbar_input = true;
+    state.active_scroll_target.reset();
+  }
+
+  // Geometry is stable between layouts, and the first query already contains
+  // the current positions on idle frames. Rewalk the tree only after input
+  // may actually have changed a scroll offset.
+  if (wheel_scrolled || scrollbar_input) {
+    scroll_states.clear();
+    state.doc->get_scroll_states(scroll_states);
+  }
+
+  // Overlay visibility is presentation state only: it never changes the
+  // scrollport or invalidates layout. Hovering a nested scroll container also
+  // hovers its scrollable ancestors, matching normal CSS hover ancestry.
+  auto& visual_states = state.scrollbar_visual_states;
+  visual_states.resize(scroll_states.size());
+  const double scrollbar_now = ImGui::GetTime();
+  const float delta_time = ImClamp(io.DeltaTime, 0.0f, 0.1f);
+  const bool window_hovered = ImGui::IsWindowHovered();
+  constexpr double idle_hold_seconds = 0.35;
+  constexpr float fade_in_seconds = 0.08f;
+  constexpr float fade_out_seconds = 0.20f;
+  for (std::size_t index = 0; index < scroll_states.size(); ++index) {
+    const litehtml::scroll_state& scroll_state = scroll_states[index];
+    ScrollbarVisualState& visual = visual_states[index];
+    const litehtml::render_item* target = scroll_state.render_target.get();
+    const litehtml::element* dom_target = scroll_state.target.get();
+    if (visual.dom_target != dom_target) {
+      visual = {.dom_target = dom_target, .target = target};
+    } else {
+      // The render item is recreated after a live list update, but the DOM
+      // scroll container survives. Keep the fade state continuous across that
+      // render-tree refresh so the scrollbar cannot flash out for one frame.
+      visual.target = target;
+    }
+
+    const bool hovered = window_hovered && point_inside(scroll_state.scroll_box, x, y) &&
+                         point_in_scroll_clip(scroll_state);
+    const bool active = target != nullptr && state.active_scroll_target.get() == target;
+    if (hovered || active) {
+      visual.visible_until = scrollbar_now + idle_hold_seconds;
+    }
+    const bool should_show = hovered || active || scrollbar_now < visual.visible_until;
+    const float step = delta_time / (should_show ? fade_in_seconds : fade_out_seconds);
+    visual.opacity = ImClamp(visual.opacity + (should_show ? step : -step), 0.0f, 1.0f);
+  }
+
+  if (ImDrawList* draw_list = ImGui::GetWindowDrawList(); draw_list != nullptr) {
+    const float viewport_height = std::max(0.0f, document_available.y);
+    PushSafeClipRect(draw_list, document_origin,
+                     document_origin + ImVec2(static_cast<float>(render_width), viewport_height));
+    state.container->paint_scrollbars(scroll_states, visual_states, document_origin);
+    draw_list->PopClipRect();
+  }
+
+  // ImHTML redraws the complete document every frame, so litehtml's
+  // invalidation callback does not need to enqueue partial redraw boxes.
+  // The forked litehtml API uses this callback instead of the old output
+  // position vector.
+  const auto redraw_box = [](const litehtml::position&) {};
+  const bool lbutton_down = !scrollbar_input && ImGui::IsMouseDown(ImGuiMouseButton_Left);
+  const bool lbutton_up = !scrollbar_input && ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+  if (lbutton_down) {
+    // on_lbutton_down() already re-hit-tests and updates the hovered
+    // element internally, so a separate on_mouse_over() call below would be
+    // redundant while the button is held.
+    state.doc->on_lbutton_down(x, y, x, y, redraw_box);
+  }
+  if (lbutton_up) {
+    state.doc->on_lbutton_up(x, y, x, y, redraw_box);
+  }
+  // get_element_by_point() walks the whole render tree, so this is one of
+  // the more expensive calls made every RenderDocument() invocation. Nothing
+  // the hover pseudo-class or cursor icon depends on can have changed unless
+  // the cursor moved, the document just relaid out, a scroll happened under
+  // a stationary cursor, or a button edge already handled it above — so
+  // skip it outright on the (overwhelming majority of) frames where the
+  // mouse is simply sitting still over unchanged content.
+  const bool mouse_moved =
+      !state.has_mouse_position || x != state.last_mouse_x || y != state.last_mouse_y;
+  if (mouse_moved || did_relayout || scrollbar_input || wheel_scrolled || lbutton_down || lbutton_up) {
+    state.doc->on_mouse_over(x, y, x, y, redraw_box);
+    state.last_mouse_x = x;
+    state.last_mouse_y = y;
+    state.has_mouse_position = true;
+  }
+  ImGui::SetCursorScreenPos(document_origin);
+  const ImRect bb(document_origin, document_origin + state.container->get_bottom_right());
   ImGui::ItemSize(bb.GetSize());
   ImGui::ItemAdd(bb, ImGui::GetID(id));
 
@@ -1169,29 +2371,67 @@ bool Canvas(const char* id, const char* html, float width, std::string* clickedU
     ImGui::SetTooltip("%s", state.container->get_tooltip().c_str());
   }
 
+  bool clicked = false;
   if (std::string url = state.container->pop_load_url(); !url.empty()) {
     if (clickedURL) {
       *clickedURL = url;
     }
-    return true;
+    clicked = true;
+  }
+
+  static const bool telemetry_enabled = std::getenv("IMHTML_TELEMETRY") != nullptr;
+  if (telemetry_enabled && state.frame_count % 120 == 0) {
+    std::fprintf(stderr,
+                 "[ImHTML telemetry] canvas=%s frames=%llu parses=%llu layouts=%llu "
+                 "full-invalidations=%llu layout-invalidations=%llu\n",
+                 id,
+                 static_cast<unsigned long long>(state.frame_count),
+                 static_cast<unsigned long long>(state.parse_count),
+                 static_cast<unsigned long long>(state.layout_count),
+                 static_cast<unsigned long long>(state.full_invalidation_count),
+                 static_cast<unsigned long long>(state.layout_invalidation_count));
   }
 
   // Cleanup all inactive states with lastActiveTime > 1 seconds
   auto now = std::chrono::high_resolution_clock::now().time_since_epoch().count();
-  for (auto it = states.begin(); it != states.end();) {
-    if (it->first != id && now - it->second.last_active_time > 1000000000) {
-      IMHTML_PRINTF("[ImHTML] Erased state for id=%s\n", it->first.c_str());
+  for (auto cleanup_it = states.begin(); cleanup_it != states.end();) {
+    if (cleanup_it->first != id && now - cleanup_it->second.last_active_time > 1000000000) {
+      IMHTML_PRINTF("[ImHTML] Erased state for id=%s\n", cleanup_it->first.c_str());
 
       // We have to destruct in this order, otherwise we get a segfault
-      it->second.doc.reset();
-      it->second.container.reset();
+      cleanup_it->second.doc.reset();
+      cleanup_it->second.container.reset();
 
-      it = states.erase(it);
+      cleanup_it = states.erase(cleanup_it);
     } else {
-      ++it;
+      ++cleanup_it;
     }
   }
 
-  return false;
+  return clicked;
+}
+
+bool Canvas(const char* id, const char* html, float width, std::string* clickedURL) {
+  ParseDocument(id, html, width);
+  return RenderDocument(id, width, clickedURL);
+}
+void MarkDocumentDirty(const char* id) {
+  if (id == nullptr) return;
+  auto& states = canvas_states();
+  const auto found = states.find(id);
+  if (found != states.end()) {
+    ++found->second.full_invalidation_count;
+    found->second.doc->invalidate_layout_cache();
+    found->second.layout_dirty = true;
+  }
+}
+void MarkDocumentLayoutDirty(const char* id) {
+  if (id == nullptr) return;
+  auto& states = canvas_states();
+  const auto found = states.find(id);
+  if (found != states.end()) {
+    ++found->second.layout_invalidation_count;
+    found->second.layout_dirty = true;
+  }
 }
 };  // namespace ImHTML
