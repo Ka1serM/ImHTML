@@ -179,7 +179,8 @@ std::shared_ptr<litehtml::document> ParseDocument(const char *id, const char *ht
 
 void ResetDocument(const char *id);
 
-bool RenderDocument(const char *id, float width = 0.0f, std::string *clickedURL = nullptr);
+bool RenderDocument(const char *id, float width = 0.0f, std::string *clickedURL = nullptr,
+                    std::vector<ScrollState> *scroll_states = nullptr);
 
 void MarkDocumentDirty(const char *id);
 

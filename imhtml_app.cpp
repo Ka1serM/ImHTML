@@ -39,6 +39,11 @@ bool telemetry_enabled() {
     return enabled;
 }
 
+bool timing_enabled() {
+    static const bool enabled = std::getenv("IMHTML_TIMINGS") != nullptr;
+    return enabled;
+}
+
 std::string TrimURL(const std::string& url) {
     const auto is_space = [](unsigned char value) { return std::isspace(value) != 0; };
     std::size_t first = 0;
@@ -270,14 +275,12 @@ bool IsScrollAncestor(const std::shared_ptr<litehtml::element>& element,
 
 class NativeControlClipScope {
 public:
-    NativeControlClipScope(const std::shared_ptr<litehtml::document>& document,
+    NativeControlClipScope(const std::vector<ScrollState>& scroll_states,
                            const std::shared_ptr<litehtml::element>& element,
                            const ImVec2& document_origin, ImDrawList* draw_list)
         : draw_list_(draw_list) {
-        if (!document || !element || !draw_list_) return;
+        if (!element || !draw_list_) return;
 
-        std::vector<ScrollState> scroll_states;
-        CollectScrollStates(document, scroll_states);
         for (const auto& state : scroll_states) {
             if (!state.target || !IsScrollAncestor(element, state.target)) continue;
 
@@ -465,6 +468,9 @@ void HtmlDocument::append_html(const std::string& selector, const std::string& h
     const auto target = doc_->root()->select_one(selector.c_str());
     if (!target) return;
     doc_->append_children_from_string(*target, html.c_str(), replace_existing);
+    element_cache_.clear();
+    id_cache_.clear();
+    control_cache_valid_ = false;
     doc_->refresh_styles();
     MarkDocumentLayoutDirty("app");
 }
@@ -541,8 +547,9 @@ bool HtmlDocument::checked(const std::string& selector) const {
 }
 
 std::string HtmlDocument::state_value(const std::string& key, const std::string& fallback) const {
-    if (!has_value(key)) return fallback;
-    return value(key);
+    const std::string normalized = !key.empty() && key.front() == '#' ? key.substr(1) : key;
+    const auto found = values_.find(normalized);
+    return found == values_.end() ? fallback : found->second;
 }
 
 void HtmlDocument::set_state(const std::string& key, const std::string& value) {
@@ -613,6 +620,15 @@ bool HtmlDocument::NotifyHtmlControlTextChanged(const std::string& id, const std
 }
 
 void HtmlDocument::RequestStructuralRebuild() { needs_rebuild_ = true; }
+
+void HtmlDocument::MarkElementLayoutDirty(const std::shared_ptr<litehtml::element>& target) {
+    if (!target) return;
+    target->mark_layout_dirty(true);
+    for (auto parent = target->parent(); parent; parent = parent->parent()) {
+        parent->mark_layout_dirty(false);
+    }
+    MarkDocumentLayoutDirty("app");
+}
 
 void HtmlDocument::mark_dirty() { RequestStructuralRebuild(); }
 
@@ -735,6 +751,8 @@ bool HtmlDocument::UpdateListInPlace(const std::string& id) {
 
     doc_->append_children_from_string(*target, html.c_str(), true);
     element_cache_.clear();
+    id_cache_.clear();
+    control_cache_valid_ = false;
     doc_->refresh_styles();
     ApplyStoredAriaSelection();
     doc_->rebuild_render_tree();
@@ -790,8 +808,7 @@ bool HtmlDocument::MeasureListRows(const std::string& id,
 void HtmlDocument::UpdateListWindows() {
     if (!doc_ || !doc_->root() || lists_.empty()) return;
 
-    std::vector<ScrollState> states;
-    CollectScrollStates(doc_, states);
+    const std::vector<ScrollState>& states = scroll_states_;
 
     for (const auto& [id, items] : lists_) {
         ListWindow& window = list_windows_[id];
@@ -1031,6 +1048,8 @@ void HtmlDocument::RebuildDocument() {
     inline_styles_.clear();
     element_texts_.clear();
     element_cache_.clear();
+    id_cache_.clear();
+    control_cache_valid_ = false;
     mounted_lazy_panels_.clear();
 
     if (shell_html_.empty()) {
@@ -1094,6 +1113,8 @@ void HtmlDocument::RebuildDocument() {
 
     MountLazyPanels();
 
+    RefreshControlCaches();
+
     SyncCheckboxes();
     SyncTextInputs();
     SyncSelects();
@@ -1105,25 +1126,50 @@ void HtmlDocument::RebuildDocument() {
     MarkDocumentDirty("app");
 }
 
+void HtmlDocument::RefreshControlCaches() {
+    checkbox_inputs_.clear();
+    text_inputs_.clear();
+    select_elements_.clear();
+    range_inputs_.clear();
+    if (!doc_ || !doc_->root()) {
+        control_cache_valid_ = true;
+        return;
+    }
+
+    const auto copy = [](const auto& source, auto& destination) {
+        destination.assign(source.begin(), source.end());
+    };
+    copy(doc_->root()->select_all("input[type=checkbox]"), checkbox_inputs_);
+    copy(doc_->root()->select_all("input[type=text]"), text_inputs_);
+    copy(doc_->root()->select_all("select"), select_elements_);
+    copy(doc_->root()->select_all("input[type=range]"), range_inputs_);
+    control_cache_valid_ = true;
+}
+
 void HtmlDocument::SyncCheckboxes() {
     if (!doc_ || !doc_->root()) return;
 
-    for (const auto& checkbox : doc_->root()->select_all("input[type=checkbox]")) {
+    for (const auto& checkbox : checkbox_inputs_) {
         const std::string id = checkbox->get_attr("id", "");
         if (id.empty()) continue;
         const bool initial = checkbox->get_attr("checked", nullptr) != nullptr;
         const std::string stored = state_value(id, "");
         const bool checked = stored.empty() ? initial : stored == "true";
         if (!has_value(id)) set_state(id, checked ? "true" : "false");
-        checkbox->set_attr("data-checked", checked ? "true" : "false");
-        checkbox->set_attr("aria-checked", checked ? "true" : "false");
+        const char* serialized = checked ? "true" : "false";
+        if (std::strcmp(checkbox->get_attr("data-checked", ""), serialized) != 0) {
+            checkbox->set_attr("data-checked", serialized);
+        }
+        if (std::strcmp(checkbox->get_attr("aria-checked", ""), serialized) != 0) {
+            checkbox->set_attr("aria-checked", serialized);
+        }
     }
 }
 
 void HtmlDocument::SyncTextInputs() {
     if (!doc_ || !doc_->root()) return;
 
-    for (const auto& input : doc_->root()->select_all("input[type=text]")) {
+    for (const auto& input : text_inputs_) {
         const std::string id = input->get_attr("id", "");
         if (id.empty()) continue;
 
@@ -1139,7 +1185,9 @@ void HtmlDocument::SyncTextInputs() {
             state.cursor = state.anchor = state.value.size();
             state.scroll_x = 0.0f;
         }
-        input->set_attr("data-value", state.value.c_str());
+        if (std::strcmp(input->get_attr("data-value", ""), state.value.c_str()) != 0) {
+            input->set_attr("data-value", state.value.c_str());
+        }
     }
 }
 
@@ -1148,7 +1196,8 @@ void HtmlDocument::DrawTextInputs(const ImVec2& document_origin) {
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
     if (!draw_list) return;
 
-    const auto inputs = doc_->root()->select_all("input[type=text]");
+    const auto& inputs = text_inputs_;
+    const ImRect visible_rect(draw_list->GetClipRectMin(), draw_list->GetClipRectMax());
     const ImVec2 mouse_pos = ImGui::GetMousePos();
     const ImVec2 window_pos = ImGui::GetWindowPos();
     const ImVec2 mouse(mouse_pos.x + window_pos.x, mouse_pos.y + window_pos.y);
@@ -1239,6 +1288,9 @@ void HtmlDocument::DrawTextInputs(const ImVec2& document_origin) {
         const ImVec2 min(document_origin.x + static_cast<float>(box.x),
                          document_origin.y + static_cast<float>(box.y));
         const ImVec2 max(min.x + static_cast<float>(box.width), min.y + static_cast<float>(box.height));
+        const bool active = active_text_id_ == id;
+        const bool visible = visible_rect.Overlaps(ImRect(min, max));
+        if (!visible && !active) continue;
         const auto& font_metrics = input->css().get_font_metrics();
         const float font_size = static_cast<float>(font_metrics.font_size);
         const float line_height = static_cast<float>(font_metrics.height);
@@ -1252,13 +1304,9 @@ void HtmlDocument::DrawTextInputs(const ImVec2& document_origin) {
         const float content_right = max.x - static_cast<float>(border.right + padding.right);
         const float content_width = std::max(1.0f, content_right - content_left);
         const float text_y = min.y + (max.y - min.y - line_height) * 0.5f;
-        const bool active = active_text_id_ == id;
-        NativeControlClipScope scroll_clip(doc_, input, document_origin, draw_list);
+        if (active) any_active = true;
         std::string value_before = state.value;
-        if (active) {
-            active_text_id_ = id;
-            any_active = true;
-        }
+        if (active) active_text_id_ = id;
 
         if (active) {
             if (!HandleHtmlControlTextKey(id)) {
@@ -1352,6 +1400,10 @@ void HtmlDocument::DrawTextInputs(const ImVec2& document_origin) {
             }
         }
 
+        // Keep keyboard handling above for an active control that scrolled
+        // out of view, but do not emit a native overlay draw command for it.
+        if (!visible) continue;
+
         const float cursor_width = TextWidth(ImGui::GetFont(), font_size, Utf8Prefix(state.value, state.cursor));
         const float selection_start = TextWidth(ImGui::GetFont(), font_size,
                                                  Utf8Prefix(state.value, std::min(state.cursor, state.anchor)));
@@ -1363,6 +1415,7 @@ void HtmlDocument::DrawTextInputs(const ImVec2& document_origin) {
             state.scroll_x = std::max(0.0f, state.scroll_x);
         }
 
+        NativeControlClipScope scroll_clip(scroll_states_, input, document_origin, draw_list);
         draw_list->PushClipRect(ImVec2(content_left, min.y), ImVec2(content_right, max.y), true);
         const float draw_x = content_left - state.scroll_x;
         if (state.cursor != state.anchor) {
@@ -1393,7 +1446,7 @@ void HtmlDocument::SyncSelects() {
     if (!doc_ || !doc_->root()) return;
 
     bool options_changed = false;
-    for (const auto& select : doc_->root()->select_all("select")) {
+    for (const auto& select : select_elements_) {
         const std::string id = select->get_attr("id", "");
         if (id.empty()) continue;
 
@@ -1418,13 +1471,22 @@ void HtmlDocument::SyncSelects() {
                                         : (options.empty() ? std::string() : options.front());
         if (stored != current) set_state(id, current);
 
-        select->set_attr("data-value", current.c_str());
-        select->set_attr("aria-valuetext", current.c_str());
+        if (std::strcmp(select->get_attr("data-value", ""), current.c_str()) != 0) {
+            select->set_attr("data-value", current.c_str());
+        }
+        if (std::strcmp(select->get_attr("aria-valuetext", ""), current.c_str()) != 0) {
+            select->set_attr("aria-valuetext", current.c_str());
+        }
         for (const auto& option : select->select_all("option")) {
             const char* value = option->get_attr("value", "");
             const bool is_selected = value != nullptr && current == value;
-            option->set_attr("selected", is_selected ? "true" : "false");
-            option->set_attr("aria-selected", is_selected ? "true" : "false");
+            const char* serialized = is_selected ? "true" : "false";
+            if (std::strcmp(option->get_attr("selected", ""), serialized) != 0) {
+                option->set_attr("selected", serialized);
+            }
+            if (std::strcmp(option->get_attr("aria-selected", ""), serialized) != 0) {
+                option->set_attr("aria-selected", serialized);
+            }
         }
     }
 
@@ -1438,7 +1500,7 @@ void HtmlDocument::SyncSelects() {
 void HtmlDocument::SyncRanges() {
     if (!doc_ || !doc_->root()) return;
 
-    for (const auto& range : doc_->root()->select_all("input[type=range]")) {
+    for (const auto& range : range_inputs_) {
         const std::string id = range->get_attr("id", "");
         if (id.empty()) continue;
 
@@ -1453,10 +1515,20 @@ void HtmlDocument::SyncRanges() {
         const std::string serialized = SerializeRangeValue(current);
 
         if (!has_value(id)) set_state(id, serialized);
-        range->set_attr("data-range-value", serialized.c_str());
-        range->set_attr("aria-valuemin", SerializeRangeValue(low).c_str());
-        range->set_attr("aria-valuemax", SerializeRangeValue(high).c_str());
-        range->set_attr("aria-valuenow", serialized.c_str());
+        if (std::strcmp(range->get_attr("data-range-value", ""), serialized.c_str()) != 0) {
+            range->set_attr("data-range-value", serialized.c_str());
+        }
+        const std::string minimum_text = SerializeRangeValue(low);
+        if (std::strcmp(range->get_attr("aria-valuemin", ""), minimum_text.c_str()) != 0) {
+            range->set_attr("aria-valuemin", minimum_text.c_str());
+        }
+        const std::string maximum_text = SerializeRangeValue(high);
+        if (std::strcmp(range->get_attr("aria-valuemax", ""), maximum_text.c_str()) != 0) {
+            range->set_attr("aria-valuemax", maximum_text.c_str());
+        }
+        if (std::strcmp(range->get_attr("aria-valuenow", ""), serialized.c_str()) != 0) {
+            range->set_attr("aria-valuenow", serialized.c_str());
+        }
         set_text("#" + id + "-value", FormatRangeValue(current));
     }
 }
@@ -1629,10 +1701,10 @@ void HtmlDocument::DrawSelects(const ImVec2& document_origin, const bool popup_o
     if (!doc_ || !doc_->root()) return;
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
     if (!draw_list) return;
+    const ImRect visible_rect(draw_list->GetClipRectMin(), draw_list->GetClipRectMax());
 
     if (!popup_only) {
-        const auto select_elements = doc_->root()->select_all("select");
-        for (const auto& select : select_elements) {
+        for (const auto& select : select_elements_) {
             litehtml::position box;
             if (!ElementBox(select, box)) continue;
             const auto render = select->get_render_item();
@@ -1641,6 +1713,7 @@ void HtmlDocument::DrawSelects(const ImVec2& document_origin, const bool popup_o
             const ImVec2 min(document_origin.x + static_cast<float>(box.x),
                              document_origin.y + static_cast<float>(box.y));
             const ImVec2 max(min.x + static_cast<float>(box.width), min.y + static_cast<float>(box.height));
+            if (!visible_rect.Overlaps(ImRect(min, max))) continue;
             const litehtml::web_color text_color = select->css().get_color();
             const float font_size = static_cast<float>(select->css().get_font_metrics().font_size);
             const ImU32 text_u32 = IM_COL32(text_color.red, text_color.green, text_color.blue, text_color.alpha);
@@ -1649,7 +1722,7 @@ void HtmlDocument::DrawSelects(const ImVec2& document_origin, const bool popup_o
             const std::string value = select->get_attr("data-value", "");
             const ImVec2 text_min(min.x + static_cast<float>(border.left + padding.left),
                                   min.y + (max.y - min.y - font_size) * 0.5f);
-            NativeControlClipScope scroll_clip(doc_, select, document_origin, draw_list);
+            NativeControlClipScope scroll_clip(scroll_states_, select, document_origin, draw_list);
             draw_list->AddText(ImGui::GetFont(), font_size, text_min, text_u32, value.c_str());
 
             const float arrow_size = std::max(2.0f, font_size * 0.2f);
@@ -1831,8 +1904,9 @@ void HtmlDocument::DrawRanges(const ImVec2& document_origin) const {
     if (!doc_ || !doc_->root()) return;
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
     if (!draw_list) return;
+    const ImRect visible_rect(draw_list->GetClipRectMin(), draw_list->GetClipRectMax());
 
-    for (const auto& range : doc_->root()->select_all("input[type=range]")) {
+    for (const auto& range : range_inputs_) {
         litehtml::position box;
         if (!RangeBox(range, box)) continue;
 
@@ -1846,6 +1920,7 @@ void HtmlDocument::DrawRanges(const ImVec2& document_origin) const {
         const ImVec2 min(document_origin.x + static_cast<float>(box.x),
                          document_origin.y + static_cast<float>(box.y));
         const ImVec2 max(min.x + static_cast<float>(box.width), min.y + static_cast<float>(box.height));
+        if (!visible_rect.Overlaps(ImRect(min, max))) continue;
         const float height = static_cast<float>(box.height);
         const float knob_width = RangeThumbWidth(height);
         const float travel_left = min.x + knob_width * 0.5f;
@@ -1866,7 +1941,7 @@ void HtmlDocument::DrawRanges(const ImVec2& document_origin) const {
         const ImU32 fill_color = ToImColor(accent);
         const ImU32 thumb_color = ToImColor(range->css().get_color());
 
-        NativeControlClipScope scroll_clip(doc_, range, document_origin, draw_list);
+        NativeControlClipScope scroll_clip(scroll_states_, range, document_origin, draw_list);
         draw_list->AddRectFilled(ImVec2(travel_left, center_y - track_radius),
                                  ImVec2(travel_left + travel, center_y + track_radius), track_color, track_radius);
         if (knob_x > travel_left) {
@@ -2044,6 +2119,10 @@ void HtmlDocument::ApplySwitchers() const {
             if (is_tab) control->set_attr("aria-selected", active ? "true" : "false");
         }
     }
+
+    // Switcher state changes classes and therefore invalidate cached selector
+    // results, including selectors held by event dispatch registrations.
+    element_cache_.clear();
 }
 
 bool HtmlDocument::SelectPanelById(const std::string& id) {
@@ -2095,20 +2174,33 @@ void HtmlDocument::set_style(const std::string& selector, const std::string& css
         return;
     }
     if (auto target = FindElement(selector)) {
+        const litehtml::style_display previous_display = target->css().get_display();
         target->set_attr("style", css.c_str());
-        target->compute_styles(false);
+        // Inline style changes can affect inherited values. Flush pending
+        // selector updates, then recompute only this subtree.
+        doc_->flush_updates();
+        target->refresh_styles();
+        target->compute_styles(true);
         inline_styles_[selector] = css;
-        MarkDocumentLayoutDirty("app");
+        if (target->css().get_display() != previous_display) {
+            // The render tree is display-dependent; a layout pass alone cannot
+            // create or remove the corresponding render item.
+            doc_->rebuild_render_tree();
+        }
+        MarkElementLayoutDirty(target);
     }
 }
 
 std::shared_ptr<litehtml::element> HtmlDocument::FindElement(const std::string& selector) {
     if (!doc_ || !doc_->root()) return {};
-    if (const auto found = element_cache_.find(selector); found != element_cache_.end()) {
+    const bool simple_id = selector.size() > 1 && selector.front() == '#' &&
+                           selector.find_first_of(" .#[>+~:") == std::string::npos;
+    auto& cache = simple_id ? id_cache_ : element_cache_;
+    if (const auto found = cache.find(selector); found != cache.end()) {
         if (auto target = found->second.lock()) return target;
     }
     auto target = doc_->root()->select_one(selector);
-    if (target) element_cache_[selector] = target;
+    if (target) cache[selector] = target;
     return target;
 }
 
@@ -2124,7 +2216,7 @@ void HtmlDocument::set_text(const std::string& selector, const std::string& text
 
     if (auto target = FindElement(selector)) {
         if (SetTextNode(target, text)) {
-            MarkDocumentLayoutDirty("app");
+            MarkElementLayoutDirty(target);
             element_texts_[selector] = text;
         }
     }
@@ -2232,7 +2324,10 @@ bool HtmlDocument::apply_selection(const std::string& id, const bool ctrl_held,
         options[i]->set_class("selected", selected[i]);
         changed = true;
     }
-    if (changed) doc_->refresh_styles();
+    if (changed) {
+        element_cache_.clear();
+        doc_->refresh_styles();
+    }
     return true;
 }
 
@@ -2255,7 +2350,10 @@ void HtmlDocument::ApplyStoredAriaSelection() const {
             changed = true;
         }
     }
-    if (changed) doc_->refresh_styles();
+    if (changed) {
+        element_cache_.clear();
+        doc_->refresh_styles();
+    }
 }
 
 std::vector<std::string> HtmlDocument::selected_ids(const std::string& listbox_id) {
@@ -2273,15 +2371,22 @@ void HtmlDocument::set_attribute(const std::string& selector, const std::string&
         const char* current = target->get_attr(name.c_str(), nullptr);
         if (current != nullptr && value == current) return;
         target->set_attr(name.c_str(), value.c_str());
-        doc_->refresh_styles();
+        const bool selector_sensitive = name == "class" || name == "id" || name == "style" ||
+                                        doc_->attribute_affects_styles(name.c_str());
+        if (selector_sensitive) {
+            element_cache_.clear();
+            if (name == "id") id_cache_.clear();
+            doc_->refresh_styles();
+        }
         if (mode == ElementUpdateMode::Layout) {
-            MarkDocumentLayoutDirty("app");
+            MarkElementLayoutDirty(target);
         }
     }
 }
 
 void HtmlDocument::frame() {
     ++frame_count_;
+    const auto frame_start = std::chrono::steady_clock::now();
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                              ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoBackground |
                              ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
@@ -2296,11 +2401,16 @@ void HtmlDocument::frame() {
     }
 
     ApplyPendingListUpdates();
+    const auto after_list_updates = std::chrono::steady_clock::now();
 
     if (needs_rebuild_) {
         needs_rebuild_ = false;
         RebuildDocument();
     }
+
+    // Synchronization and user callbacks commonly issue several attribute
+    // mutations. Defer their stylesheet walk until immediately before layout.
+    doc_->begin_update();
 
     if (before_render) {
         before_render();
@@ -2312,14 +2422,30 @@ void HtmlDocument::frame() {
         }
     }
 
+    if (!control_cache_valid_) RefreshControlCaches();
     SyncTextInputs();
     SyncSelects();
     SyncRanges();
+    doc_->end_update();
+    const auto after_sync = std::chrono::steady_clock::now();
     const ImVec2 document_origin = ImGui::GetCursorScreenPos();
     std::string clicked_url;
-    if (RenderDocument("app", 0.0f, &clicked_url) && !clicked_url.empty()) {
+    const bool clicked = RenderDocument("app", 0.0f, &clicked_url, &scroll_states_);
+    if (clicked && !clicked_url.empty()) {
         handle_interaction(clicked_url);
+        // A click handler may append or replace controls. Keep the overlay
+        // cache and scroll snapshot coherent for this same frame.
+        if (!control_cache_valid_) RefreshControlCaches();
+        if (doc_ && doc_->root()) {
+            scroll_states_.clear();
+            CollectScrollStates(doc_, scroll_states_);
+        }
     }
+    const auto after_document = std::chrono::steady_clock::now();
+    // RenderDocument has already applied scrolling and has the authoritative
+    // post-scroll geometry. Share one snapshot with all native overlays;
+    // otherwise every input/select/range would walk the complete render tree
+    // independently just to reconstruct the same ancestor clips.
     DrawTextInputs(document_origin);
     UpdateSelectFromMouse(document_origin);
     UpdateRangeFromMouse(document_origin);
@@ -2331,6 +2457,7 @@ void HtmlDocument::frame() {
     DrawSelects(document_origin, true);
 
     UpdateListWindows();
+    const auto after_overlays = std::chrono::steady_clock::now();
 
     if (telemetry_enabled() && frame_count_ % 120 == 0) {
         std::fprintf(stderr,
@@ -2342,6 +2469,22 @@ void HtmlDocument::frame() {
                      static_cast<unsigned long long>(inactive_list_update_count_),
                      static_cast<unsigned long long>(paint_only_list_update_count_),
                      static_cast<unsigned long long>(in_place_list_update_count_));
+    }
+    if (timing_enabled() && frame_count_ % 120 == 0) {
+        const auto micros = [](const auto begin, const auto end) {
+            return std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count();
+        };
+        std::fprintf(stderr,
+                     "[ImHTML timings] frame=%llu list=%lld sync=%lld document=%lld overlays=%lld total=%lld "
+                     "controls(text=%zu checkbox=%zu select=%zu range=%zu) scroll=%zu\n",
+                     static_cast<unsigned long long>(frame_count_),
+                     static_cast<long long>(micros(frame_start, after_list_updates)),
+                     static_cast<long long>(micros(after_list_updates, after_sync)),
+                     static_cast<long long>(micros(after_sync, after_document)),
+                     static_cast<long long>(micros(after_document, after_overlays)),
+                     static_cast<long long>(micros(frame_start, after_overlays)),
+                     text_inputs_.size(), checkbox_inputs_.size(), select_elements_.size(), range_inputs_.size(),
+                     scroll_states_.size());
     }
 
     ImGui::End();

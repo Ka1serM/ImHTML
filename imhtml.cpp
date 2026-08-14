@@ -436,6 +436,7 @@ class BrowserContainer : public litehtml::document_container {
     std::string Family;
     float Size = 16.0f;
     litehtml::font_metrics Metrics{};
+    std::unordered_map<std::string, litehtml::pixel_t> WidthCache;
   };
 
   std::unordered_map<litehtml::uint_ptr, std::unique_ptr<ResolvedFont>> fonts_;
@@ -500,9 +501,16 @@ class BrowserContainer : public litehtml::document_container {
       return 0;
     }
 
+    const auto cached = rf->WidthCache.find(text);
+    if (cached != rf->WidthCache.end()) {
+      return cached->second;
+    }
+
     const char* end = text + strlen(text);
     ImVec2 size = rf->Font->CalcTextSizeA(rf->Size, FLT_MAX, 0.0f, text, end, nullptr);
-    return (litehtml::pixel_t)size.x;
+    const litehtml::pixel_t width = static_cast<litehtml::pixel_t>(size.x);
+    rf->WidthCache.emplace(text, width);
+    return width;
   }
 
   virtual void draw_text(litehtml::uint_ptr hdc, const char* text, litehtml::uint_ptr hFont, litehtml::web_color color,
@@ -517,9 +525,12 @@ class BrowserContainer : public litehtml::document_container {
 
     ImGui::GetWindowDrawList()->AddText(rf->Font, rf->Size, p, col, text);
 
-    const char* end = text + strlen(text);
-    ImVec2 size = rf->Font->CalcTextSizeA(rf->Size, FLT_MAX, 0.0f, text, end, nullptr);
-    push_bottom_right(ImVec2(pos.x + size.x, pos.y + size.y));
+    // text_width() owns the per-font cache used during layout. Reuse it for
+    // the paint-side bounds bookkeeping instead of measuring every visible
+    // text run a second time on every frame.
+    const litehtml::pixel_t measured_width = text_width(text, hFont);
+    push_bottom_right(ImVec2(pos.x + static_cast<float>(measured_width),
+                             pos.y + static_cast<float>(rf->Metrics.height)));
   }
 
   //
@@ -1840,6 +1851,18 @@ void CollectScrollStates(const std::shared_ptr<litehtml::document>& document,
   }
 }
 
+void RefreshScrollStateOffsets(std::vector<ScrollState>& states) {
+  for (ScrollState& state : states) {
+    if (!state.render_target) continue;
+    state.left = state.render_target->get_scroll_left();
+    state.top = state.render_target->get_scroll_top();
+    state.max_left = state.render_target->get_max_scroll_left();
+    state.max_top = state.render_target->get_max_scroll_top();
+    state.content_size = litehtml::size(state.viewport_size.width + state.max_left,
+                                        state.viewport_size.height + state.max_top);
+  }
+}
+
 namespace {
 struct CanvasState {
   std::shared_ptr<BrowserContainer> container;
@@ -1909,7 +1932,8 @@ void ResetDocument(const char* id) {
   canvas_states().erase(id);
 }
 
-bool RenderDocument(const char* id, float width, std::string* clickedURL) {
+bool RenderDocument(const char* id, float width, std::string* clickedURL,
+                    std::vector<ScrollState>* scroll_states_out) {
   auto& states = canvas_states();
   auto it = states.find(id);
   if (it == states.end()) {
@@ -1928,10 +1952,12 @@ bool RenderDocument(const char* id, float width, std::string* clickedURL) {
   int render_width = width > 0 ? (int)width : (int)ImGui::GetContentRegionAvail().x;
   int render_height = (int)document_available.y;
   static const bool force_relayout = std::getenv("IMHTML_FORCE_RELAYOUT") != nullptr;
-  const bool did_relayout = force_relayout || state.layout_dirty || state.layout_width != render_width ||
+  const bool did_relayout = force_relayout || state.layout_dirty || state.doc->layout_dirty() ||
+                            state.doc->render_tree_dirty() || state.layout_width != render_width ||
                             state.layout_height != render_height;
   if (did_relayout) {
     state.doc->render(render_width);
+    CollectScrollStates(state.doc, state.scroll_states);
     ++state.layout_count;
     state.layout_width = render_width;
     state.layout_height = render_height;
@@ -1939,8 +1965,6 @@ bool RenderDocument(const char* id, float width, std::string* clickedURL) {
   }
   litehtml::position clip(
       0, 0, render_width, std::max((int)state.doc->height(), (int)ImGui::GetContentRegionAvail().y));
-  state.container->apply_requested_cursor();
-  state.doc->draw(0, 0, 0, &clip);
 
   const ImVec2 mouse_pos = ImGui::GetMousePos();
   const ImVec2 window_pos = ImGui::GetWindowPos();
@@ -1949,7 +1973,9 @@ bool RenderDocument(const char* id, float width, std::string* clickedURL) {
   auto y = mouse.y - document_origin.y;
 
   std::vector<ScrollState>& scroll_states = state.scroll_states;
-  CollectScrollStates(state.doc, scroll_states);
+  if (!did_relayout) {
+    RefreshScrollStateOffsets(scroll_states);
+  }
 
   const auto point_inside = [](const litehtml::position& box, float px, float py) {
     return px >= static_cast<float>(box.x) && py >= static_cast<float>(box.y) &&
@@ -2079,8 +2105,15 @@ bool RenderDocument(const char* id, float width, std::string* clickedURL) {
   }
 
   if (wheel_scrolled || scrollbar_input) {
-    CollectScrollStates(state.doc, scroll_states);
+    RefreshScrollStateOffsets(scroll_states);
   }
+
+  // Apply wheel/scrollbar changes before painting the document. Native HTML
+  // controls are painted by ImHTML immediately after this function returns;
+  // drawing litehtml first would leave the HTML content one frame behind the
+  // input overlay whenever the scroll offset changed.
+  state.container->apply_requested_cursor();
+  state.doc->draw(0, 0, 0, &clip);
 
   auto& visual_states = state.scrollbar_visual_states;
   visual_states.resize(scroll_states.size());
@@ -2167,6 +2200,10 @@ bool RenderDocument(const char* id, float width, std::string* clickedURL) {
                  static_cast<unsigned long long>(state.layout_invalidation_count));
   }
 
+  if (scroll_states_out != nullptr) {
+    *scroll_states_out = scroll_states;
+  }
+
   // Cleanup all inactive states with lastActiveTime > 1 seconds
   auto now = std::chrono::high_resolution_clock::now().time_since_epoch().count();
   for (auto cleanup_it = states.begin(); cleanup_it != states.end();) {
@@ -2197,6 +2234,7 @@ void MarkDocumentDirty(const char* id) {
   if (found != states.end()) {
     ++found->second.full_invalidation_count;
     found->second.layout_dirty = true;
+    if (found->second.doc) found->second.doc->mark_layout_dirty();
   }
 }
 void MarkDocumentLayoutDirty(const char* id) {
@@ -2206,6 +2244,7 @@ void MarkDocumentLayoutDirty(const char* id) {
   if (found != states.end()) {
     ++found->second.layout_invalidation_count;
     found->second.layout_dirty = true;
+    if (found->second.doc) found->second.doc->mark_layout_dirty();
   }
 }
 };  // namespace ImHTML

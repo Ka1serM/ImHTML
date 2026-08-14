@@ -167,6 +167,7 @@ private:
                          const std::shared_ptr<litehtml::element>& list_element);
     void ApplyPendingListUpdates();
     void RequestStructuralRebuild();
+    void MarkElementLayoutDirty(const std::shared_ptr<litehtml::element>& target);
     std::string BuildFragmentHtml(const std::string& name) const;
     void SelectInitialFragment();
     void RebuildDocument();
@@ -175,6 +176,7 @@ private:
     void SyncTextInputs();
     void SyncSelects();
     void SyncRanges();
+    void RefreshControlCaches();
     void DrawTextInputs(const ImVec2& document_origin);
     void UpdateSelectFromMouse(const ImVec2& document_origin);
     void DrawSelects(const ImVec2& document_origin, bool popup_only = false);
@@ -220,6 +222,12 @@ private:
     };
     std::unordered_map<std::string, TextInputState> text_states_;
     std::unordered_map<std::string, float> select_scroll_offsets_;
+    std::vector<ScrollState> scroll_states_;
+    std::vector<std::shared_ptr<litehtml::element>> checkbox_inputs_;
+    std::vector<std::shared_ptr<litehtml::element>> text_inputs_;
+    std::vector<std::shared_ptr<litehtml::element>> select_elements_;
+    std::vector<std::shared_ptr<litehtml::element>> range_inputs_;
+    bool control_cache_valid_ = false;
     bool select_scroll_dragging_ = false;
     float select_scroll_drag_offset_ = 0.0f;
     bool text_mouse_selecting_ = false;
@@ -248,7 +256,8 @@ private:
     mutable std::unordered_map<std::string, std::string> list_templates_;
     mutable std::unordered_map<std::string, ListWindow> list_windows_;
     std::unordered_set<std::string> pending_list_updates_;
-    std::unordered_map<std::string, std::weak_ptr<litehtml::element>> element_cache_;
+    mutable std::unordered_map<std::string, std::weak_ptr<litehtml::element>> element_cache_;
+    mutable std::unordered_map<std::string, std::weak_ptr<litehtml::element>> id_cache_;
     std::unordered_set<const litehtml::element*> mounted_lazy_panels_;
     std::uint64_t frame_count_ = 0;
     std::uint64_t rebuild_count_ = 0;
