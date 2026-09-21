@@ -1,0 +1,51 @@
+<div class="content-shell">
+    <div class="page-centered">
+        <h1>Plugins</h1>
+        <div class="box">
+            <settings-box
+                title="Auto Update Plugins"
+                subtitle="Automatically update the import plugins."
+                ><input
+                    type="checkbox"
+                    role="switch"
+                    id="plugins-auto-update"
+                    name="plugins-auto-update"
+                    aria-label="Auto Update Plugins"
+                    checked
+                />
+            </settings-box>
+        </div>
+        <div class="box">
+            <div class="expandable-header">
+                <img src="assets/icons/fluent/plug_connected.svg" alt="" /><b
+                    >Plugin Installations</b
+                ><small>Add or Remove Plugin Installations</small>
+            </div>
+            <ul id="plugin-installations" class="settings-list" role="listbox" aria-multiselectable="true"></ul>
+            <template id="plugin-installations-template">
+                <li role="option" aria-selected="false">
+                    <div class="row settings-box">
+                        <img data-field="icon" alt="">
+                        <div class="copy"><b data-field="title"></b><small data-field="subtitle"></small></div>
+                        <button data-action="remove-plugin" class="danger" aria-label="Remove plugin">
+                            <img src="assets/icons/fluent/remove.svg" alt="">Remove
+                        </button>
+                    </div>
+                </li>
+            </template>
+            <div class="button-row">
+                <button id="plugins-add" data-action="plugins-add" aria-label="Add plugin">
+                    <img src="assets/icons/fluent/add.svg" alt="" />Add
+                </button>
+                <button
+                    id="plugins-sync"
+                    data-action="plugins-sync"
+                    class="primary"
+                    aria-label="Sync plugins"
+                >
+                    <img src="assets/icons/fluent/sync.svg" alt="" />Sync
+                </button>
+            </div>
+        </div>
+    </div>
+</div>

@@ -1,0 +1,129 @@
+<div class="content-shell">
+    <div class="settings-page" data-switcher="settings">
+        <div class="settings-layout">
+            <aside class="sidebar settings-sidebar">
+                <div class="sidebar-rail">
+                    <div class="nav" role="tablist">
+                        <a
+                            class="nav-link"
+                            id="settings-provider"
+                            role="tab"
+                            href="#settings-panel-provider"
+                        >
+                            <img
+                                src="assets/icons/fluent/archive.svg"
+                                alt=""
+                            />Provider
+                        </a>
+                        <a
+                            class="nav-link"
+                            id="settings-encryption"
+                            role="tab"
+                            href="#settings-panel-encryption"
+                        >
+                            <img src="assets/icons/fluent/key.svg" alt="" />Encryption
+                        </a>
+                        <a
+                            class="nav-link"
+                            id="settings-options"
+                            role="tab"
+                            href="#settings-panel-options"
+                        >
+                            <img
+                                src="assets/icons/fluent/person.svg"
+                                alt=""
+                            />Options
+                        </a>
+                        <a
+                            class="nav-link"
+                            id="settings-versions"
+                            role="tab"
+                            href="#settings-panel-versions"
+                        >
+                            <img
+                                src="assets/icons/fluent/code.svg"
+                                alt=""
+                            />Versions
+                        </a>
+                        <a
+                            class="nav-link"
+                            id="settings-auto-texture"
+                            role="tab"
+                            href="#settings-panel-auto-texture"
+                        >
+                            <img
+                                src="assets/icons/fluent/paint_brush.svg"
+                                alt=""
+                            />AutoTexture
+                        </a>
+                    </div>
+                </div>
+            </aside>
+            <div id="settings-tab-slot" class="tab-panels">
+                <div
+                    id="settings-panel-provider"
+                    class="tab-panel"
+                    role="tabpanel"
+                    aria-labelledby="settings-provider"
+                ></div>
+                <div
+                    id="settings-panel-encryption"
+                    class="tab-panel"
+                    role="tabpanel"
+                    aria-labelledby="settings-encryption"
+                ></div>
+                <div
+                    id="settings-panel-options"
+                    class="tab-panel"
+                    role="tabpanel"
+                    aria-labelledby="settings-options"
+                ></div>
+                <div
+                    id="settings-panel-versions"
+                    class="tab-panel"
+                    role="tabpanel"
+                    aria-labelledby="settings-versions"
+                ></div>
+                <div
+                    id="settings-panel-auto-texture"
+                    class="tab-panel"
+                    role="tabpanel"
+                    aria-labelledby="settings-auto-texture"
+                ></div>
+            </div>
+        </div>
+
+        <!-- The profile bar belongs to every settings page, so it sits outside
+             the switched panels. -->
+        <div class="box settings-profile-bar">
+            <div class="row">
+                <img src="assets/icons/fluent/settings.svg" alt="" />
+                <div class="copy">
+                    <b>Settings Profile</b>
+                    <small>Add or Remove Settings Profiles</small>
+                </div>
+                <img-button-square
+                    id="add-settings-item"
+                    data-action="add-settings-item"
+                    icon="assets/icons/fluent/add.svg"
+                    aria-label="Add settings profile"
+                />
+                <img-button-square
+                    id="remove-settings-item"
+                    data-action="remove-settings-item"
+                    icon="assets/icons/fluent/remove.svg"
+                    aria-label="Remove settings profile"
+                />
+                <!-- Picking switches profile; typing a new name renames the
+                     current one, exactly like the editable combo box in the
+                     Avalonia build. -->
+                <combo-box
+                    id="settings-profile"
+                    name="settings-profile"
+                    searchable="false"
+                    aria-label="Settings Profile"
+                ></combo-box>
+            </div>
+        </div>
+    </div>
+</div>

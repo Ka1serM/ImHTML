@@ -1,0 +1,91 @@
+<div class="page-header">
+    <div class="copy"><h1>AutoTexture</h1></div>
+</div>
+<div class="box">
+    <settings-box
+        icon="assets/icons/fluent/paint_brush.svg"
+        title="AutoTexture"
+        subtitle="Connect textures in materials using the table below."
+        ><input
+            type="checkbox"
+            role="switch"
+            id="auto-texture"
+            name="auto-texture"
+            aria-label="AutoTexture"
+        />
+    </settings-box>
+</div>
+<div class="box">
+    <div class="expandable-header">
+        <img src="assets/icons/fluent/table.svg" alt="" /><b
+            >AutoTexture Table</b
+        ><small>Texture name matching rules and channel usage</small>
+    </div>
+    <div class="auto-texture-table">
+        <div class="auto-texture-row auto-texture-header" role="row">
+            <div class="auto-texture-cell">Type</div>
+            <div class="auto-texture-cell">Name</div>
+            <div class="auto-texture-cell">Blacklist</div>
+            <div class="auto-texture-cell">R</div>
+            <div class="auto-texture-cell">G</div>
+            <div class="auto-texture-cell">B</div>
+            <div class="auto-texture-cell">A</div>
+        </div>
+        <div id="auto-texture-items" class="auto-texture-list" role="listbox" aria-multiselectable="true"></div>
+        <template id="auto-texture-items-template">
+                <div class="auto-texture-row " role="option" aria-selected="false">
+                    <div class="auto-texture-cell"><span data-field="parameter"></span></div>
+                    <div class="auto-texture-cell">
+                        <input
+                            data-field="name"
+                            name="name"
+                            type="text"
+                            value=""
+                            aria-label="name pattern"
+                        />
+                    </div>
+                    <div class="auto-texture-cell">
+                        <input
+                            data-field="blacklist"
+                            name="blacklist"
+                            type="text"
+                            value=""
+                            aria-label="blacklist"
+                        />
+                    </div>
+                    <div class="auto-texture-cell">
+                        <input
+                            data-field="r"
+                            name="r"
+                            type="checkbox"
+                            aria-label="red channel"
+                        />
+                    </div>
+                    <div class="auto-texture-cell">
+                        <input
+                            data-field="g"
+                            name="g"
+                            type="checkbox"
+                            aria-label="green channel"
+                        />
+                    </div>
+                    <div class="auto-texture-cell">
+                        <input
+                            data-field="b"
+                            name="b"
+                            type="checkbox"
+                            aria-label="blue channel"
+                        />
+                    </div>
+                    <div class="auto-texture-cell">
+                        <input
+                            data-field="a"
+                            name="a"
+                            type="checkbox"
+                            aria-label="alpha channel"
+                        />
+                    </div>
+                </div>
+            </template>
+    </div>
+</div>

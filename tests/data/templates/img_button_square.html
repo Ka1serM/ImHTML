@@ -1,0 +1,3 @@
+<button class="icon{% if exists("class") %} {{ class }}{% endif %}"{% if exists("id") %} id="{{ id }}"{% endif %}{% if exists("data-action") %} data-action="{{ data-action }}"{% endif %} aria-label="{{ aria-label }}">
+  <img src="{{ icon }}" alt="">
+</button>

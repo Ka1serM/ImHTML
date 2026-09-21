@@ -1,0 +1,43 @@
+<div class="control-group">
+    <label class="check-row"><input id="renderer-tonemapping" type="checkbox" checked /> Tonemapping</label>
+</div>
+<div class="control-group">
+    <label for="renderer-samples">Samples Per Pixel</label>
+    <div class="range-control"><input id="renderer-samples" type="range" min="1" max="64" value="1" /><output id="renderer-samples-value" class="range-value">1</output></div>
+</div>
+<div class="control-group">
+    <label for="renderer-max-samples">Max Samples</label>
+    <div class="range-control"><input id="renderer-max-samples" type="range" min="1" max="100000" value="512" /><output id="renderer-max-samples-value" class="range-value">512</output></div>
+</div>
+<div class="control-group">
+    <label class="check-row"><input id="renderer-denoise" type="checkbox" /> OptiX Denoiser</label>
+</div>
+<div class="control-group">
+    <label for="renderer-denoiser-min-samples">Denoiser Min Samples</label>
+    <div class="range-control"><input id="renderer-denoiser-min-samples" type="range" min="1" max="100000" value="1" /><output id="renderer-denoiser-min-samples-value" class="range-value">1</output></div>
+</div>
+<div class="control-group">
+    <label class="check-row"><input id="renderer-aov" type="checkbox" checked /> AOVs During Camera Motion</label>
+</div>
+<div class="control-group">
+    <label for="renderer-depth">Max Bounces</label>
+    <div class="range-control"><input id="renderer-depth" type="range" min="1" max="64" value="8" /><output id="renderer-depth-value" class="range-value">8</output></div>
+</div>
+<div class="control-group">
+    <label for="renderer-indirect-clamp">Indirect Light Clamp</label>
+    <div class="range-control"><input id="renderer-indirect-clamp" type="range" min="0" max="100000" value="10" /><output id="renderer-indirect-clamp-value" class="range-value">10</output></div>
+</div>
+<div class="control-group">
+    <label class="check-row"><input id="renderer-transparent" type="checkbox" /> Transparent Background</label>
+</div>
+<div class="control-group">
+    <label for="renderer-buffer">Buffer View</label>
+    <select id="renderer-buffer"></select>
+</div>
+<div class="control-group">
+    <label for="renderer-pixel-size">Pixel Size</label>
+    <select id="renderer-pixel-size"></select>
+</div>
+<div class="control-group">
+    <label class="check-row"><input id="renderer-overlays" type="checkbox" checked /> Viewport Overlays</label>
+</div>

@@ -1,0 +1,8 @@
+<div class="row settings-box">
+    {% if exists("icon") %}<img src="{{icon}}" alt="" />{% endif %}
+    <div class="copy">
+        <b>{{title}}</b>{% if exists("subtitle") %}<small>{{subtitle}}</small>{%
+        endif %}
+    </div>
+    {{ children }}
+</div>

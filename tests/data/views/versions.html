@@ -1,0 +1,140 @@
+<div class="page-header">
+    <div class="copy"><h1>Versions</h1></div>
+</div>
+<div class="box">
+    <div class="expandable-header">
+        <img src="assets/icons/fluent/document_endnote.svg" alt="" /><b
+            >Custom Versions</b
+        ><small>Add or remove custom versions</small>
+    </div>
+    <div class="button-row">
+        <button id="add-custom-version" data-action="add-custom-version" aria-label="Add a custom version">
+            <img src="assets/icons/fluent/add.svg" alt="" />Add
+        </button>
+        <button
+            id="remove-custom-version"
+            data-action="remove-custom-version"
+            class="danger"
+            aria-label="Remove the selected custom versions"
+        >
+            <img src="assets/icons/fluent/remove.svg" alt="" />Remove
+        </button>
+    </div>
+    <ul id="custom-versions" class="settings-list" role="listbox" aria-multiselectable="true"></ul>
+        <template id="custom-versions-template">
+            <li class="" role="option" aria-selected="false">
+                <div class="row">
+                    <input
+                        data-field="guid"
+                        name="guid"
+                        class="grow"
+                        type="text"
+                        value=""
+                        aria-label="Version identifier"
+                        placeholder="Version Identifier"
+                    />
+                    <input
+                        data-field="version"
+                        name="version"
+                        type="text"
+                        value=""
+                        aria-label="Version number"
+                        placeholder="Version Number"
+                    />
+                </div>
+            </li>
+        </template>
+</div>
+<div class="box">
+    <div class="expandable-header">
+        <img src="assets/icons/fluent/options.svg" alt="" /><b>Options</b
+        ><small>Add or remove options</small>
+    </div>
+    <div class="button-row">
+        <button id="add-option" data-action="add-option" aria-label="Add an option">
+            <img src="assets/icons/fluent/add.svg" alt="" />Add
+        </button>
+        <button
+            id="remove-option"
+            data-action="remove-option"
+            class="danger"
+            aria-label="Remove the selected options"
+        >
+            <img src="assets/icons/fluent/remove.svg" alt="" />Remove
+        </button>
+    </div>
+    <ul id="options" class="settings-list" role="listbox" aria-multiselectable="true"></ul>
+        <template id="options-template">
+            <li class="" role="option" aria-selected="false">
+                <div class="row">
+                    <input
+                        data-field="name"
+                        name="name"
+                        class="grow"
+                        type="text"
+                        value=""
+                        aria-label="Option name"
+                        placeholder="Option Name"
+                    />
+                    <input
+                        type="checkbox"
+                        role="switch"
+                        data-field="value"
+                        name="value"
+                        aria-label="Option value"
+                    />
+                </div>
+            </li>
+        </template>
+</div>
+<div class="box">
+    <div class="expandable-header">
+        <img src="assets/icons/fluent/code.svg" alt="" /><b>Map Struct Types</b
+        ><small>Add or remove map struct types</small>
+    </div>
+    <div class="button-row">
+        <button id="add-map-struct-type" data-action="add-map-struct-type" aria-label="Add a map struct type">
+            <img src="assets/icons/fluent/add.svg" alt="" />Add
+        </button>
+        <button
+            id="remove-map-struct-type"
+            data-action="remove-map-struct-type"
+            class="danger"
+            aria-label="Remove the selected map struct types"
+        >
+            <img src="assets/icons/fluent/remove.svg" alt="" />Remove
+        </button>
+    </div>
+    <ul id="map-struct-types" class="settings-list" role="listbox" aria-multiselectable="true"></ul>
+        <template id="map-struct-types-template">
+            <li class="" role="option" aria-selected="false">
+                <div class="row">
+                    <input
+                        data-field="name"
+                        name="name"
+                        class="grow"
+                        type="text"
+                        value=""
+                        aria-label="Map name"
+                        placeholder="Map Name"
+                    />
+                    <input
+                        data-field="key"
+                        name="key"
+                        type="text"
+                        value=""
+                        aria-label="Key name"
+                        placeholder="Key Name"
+                    />
+                    <input
+                        data-field="value"
+                        name="value"
+                        type="text"
+                        value=""
+                        aria-label="Value type"
+                        placeholder="Value Type"
+                    />
+                </div>
+            </li>
+        </template>
+</div>

@@ -1,0 +1,63 @@
+<div class="page-header">
+    <div class="copy"><h1>Encryption</h1></div>
+</div>
+<div class="box">
+    <settings-box
+        icon="assets/icons/fluent/key.svg"
+        title="Main Encryption Key"
+        subtitle="AES key used to decrypt the game's archives."
+        ><input
+            id="encryption-key"
+            name="encryption-key"
+            class="wide"
+            type="text"
+            aria-label="Main Encryption Key"
+            placeholder="0x0000000000000000000000000000000000000000000000000000000000000000"
+    /></settings-box>
+</div>
+<div class="box">
+    <div class="expandable-header">
+        <img src="assets/icons/fluent/options.svg" alt="" /><b
+            >Extra Encryption Keys</b
+        ><small>Extra encryption keys for decrypting archives</small>
+    </div>
+    <div class="button-row">
+        <button
+            id="import-encryption"
+            data-action="import-encryption"
+            aria-label="Import encryption keys from a JSON file"
+        >
+            <img src="assets/icons/fluent/download.svg" alt="" />Import
+        </button>
+        <button id="add-encryption" data-action="add-encryption" aria-label="Add an encryption key">
+            <img src="assets/icons/fluent/add.svg" alt="" />Add
+        </button>
+        <button
+            id="remove-encryption"
+            data-action="remove-encryption"
+            class="danger"
+            aria-label="Remove the selected encryption keys"
+        >
+            <img src="assets/icons/fluent/remove.svg" alt="" />Remove
+        </button>
+    </div>
+    <ul id="extra-encryptions" class="settings-list" role="listbox" aria-multiselectable="true"></ul>
+        <template id="extra-encryptions-template">
+            <li class="" role="option" aria-selected="false">
+                <settings-box
+                    icon="assets/icons/fluent/archive.svg"
+                    title=""
+                    subtitle=""
+                >
+                    <input
+                        data-field="key"
+                        name="key"
+                        type="text"
+                        value=""
+                        aria-label="Encryption key"
+                        placeholder="Encryption Key"
+                    />
+                </settings-box>
+            </li>
+        </template>
+</div>

@@ -1,0 +1,1485 @@
+/* Single stylesheet for the whole app.
+
+   The rule of thumb: plain HTML tags carry the look, so markup stays free of
+   classes. <button> is a button, <input> is a field, <input type="checkbox"> is
+   a checkbox, <b>/<small> are a row title and its subtitle. Classes are only
+   for layout containers and for the handful of real variants (.primary,
+   .danger, .selected). */
+
+/* NOTE: this litehtml build ignores flex `gap` entirely - in both directions.
+   All spacing between flex children has to be margins on the children. */
+
+/* NOTE: it also implements only the `overflow` shorthand. `overflow-x` and
+   `overflow-y` parse as unknown properties and are dropped, so an element
+   declaring only those never becomes a scroll container and silently clips
+   instead of scrolling. Always use the shorthand. */
+
+/* ---------------------------------------------------------------- theme */
+
+/* The accent is the single theme input. Everything else is a literal colour
+   on purpose: in this litehtml build a declaration that uses var() is
+   re-resolved late and beats a more specific rule that does not, so a var()
+   palette makes overrides like "this button has no border" silently fail. */
+html {
+    --accent: #3b9c52;
+    /* Keep the larger UI scale in one place. Individual dimensions stay on
+       clean rem values so litehtml does not accumulate decimal rounding in
+       every box and border. */
+    font-size: 100%;
+}
+
+/* Native-control properties consumed by the ImHTML renderer. They mirror
+   browser CSS rather than exposing backend-specific variables. */
+html,
+body {
+    scrollbar-color: #8e919b #3a3c43;
+    scrollbar-width: thin;
+}
+
+/* ------------------------------------------------------------------ base */
+
+template {
+    display: none;
+}
+
+html,
+body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: visible;
+    display: flex;
+    flex: 1 1 auto;
+    box-sizing: border-box;
+    min-width: 0;
+    min-height: 0;
+    color: #f3f4f6;
+    background: transparent;
+    font-family: sans-serif;
+    line-height: 1.375rem;
+}
+
+body {
+    flex-direction: column;
+    box-sizing: border-box;
+    background: transparent;
+    border: 0;
+    font-size: 1rem;
+}
+
+/* The HTML root of the native transparent window. Keeping this as one
+   lowest-level rounded surface makes the framebuffer corners transparent;
+   the body itself must not paint a square background behind it. */
+.window-surface {
+    display: flex;
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    box-sizing: border-box;
+    padding: 0.3125rem;
+    background: #1b1c20;
+    border: 0.0625rem solid #2f3036;
+    border-radius: 1.125rem;
+    overflow: hidden;
+}
+
+h1 {
+    margin: 0 0 1.4375rem;
+    color: #f3f4f6;
+    font-size: 1.5625rem;
+    line-height: 1.875rem;
+}
+
+/* Section heading. Same size as everything else - weight and colour carry the
+   hierarchy, so a box header never reads as a different type scale than the
+   row titles under it. */
+h2 {
+    margin: 0 0 0.5625rem;
+    color: #f3f4f6;
+    font-size: 1rem;
+    font-weight: 600;
+    line-height: 1.3125rem;
+}
+
+/* Row title / subtitle pair. Both work inside <label>, which block elements
+   would not survive. */
+b {
+    color: #f3f4f6;
+    font-size: 1rem;
+    font-weight: 600;
+    line-height: 1.25;
+}
+
+small {
+    color: #a1a1aa;
+    font-size: 1rem;
+    line-height: 1.3125rem;
+}
+
+p {
+    margin: 0.4375rem 0 0;
+    color: #a1a1aa;
+    font-size: 1rem;
+    line-height: 1.4375rem;
+}
+
+p + h2 {
+    margin-top: 1.125rem;
+}
+
+a {
+    color: var(--accent);
+    font-size: 1rem;
+    text-decoration: none;
+}
+
+label {
+    display: block;
+    margin: 0.4375rem 0;
+    color: #d8d9df;
+    font-size: 1rem;
+    line-height: 1.5rem;
+}
+
+img {
+    display: inline-block;
+    width: 1.125rem;
+    height: 1.125rem;
+    object-fit: contain;
+    vertical-align: middle;
+}
+
+/* -------------------------------------------------------------- controls */
+
+button,
+a.button,
+select,
+input {
+    box-sizing: border-box;
+    height: 2.25rem;
+    min-height: 2.25rem;
+    margin: 0.125rem;
+    padding: 0.5rem 0.75rem;
+    border: 0.0625rem solid #41434b;
+    border-radius: 0.5625rem;
+    background: #25262a;
+    color: #f3f4f6;
+    font-family: sans-serif;
+    font-size: 1rem;
+    line-height: 1.25;
+}
+
+/* Editable comboboxes are ordinary HTML after the template expands. The
+   wrapper owns the shared frame; the input and button remain real controls,
+   while the listbox is a normal CSS scrolling box. */
+.combo-box {
+    position: relative;
+    display: block;
+    box-sizing: border-box;
+    flex: 0 1 auto;
+    min-width: 0;
+    height: 2.25rem;
+    min-height: 2.25rem;
+    margin: 0.125rem;
+    padding: 0;
+    overflow: visible;
+    border: 0.0625rem solid #41434b;
+    border-radius: 0.5625rem;
+    background: #25262a;
+    color: #f3f4f6;
+    font-family: sans-serif;
+    font-size: 1rem;
+    line-height: 1.25;
+}
+.combo-box > input[type="text"] {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+    margin: 0;
+    padding: 0.5rem 0.75rem;
+    border: 0;
+    border-radius: 0.5rem 0 0 0.5rem;
+    background: transparent;
+}
+.combo-box-toggle {
+    position: absolute;
+    display: block;
+    top: 0;
+    right: 0;
+    width: 2rem;
+    height: 100%;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0 0.5rem 0.5rem 0;
+    background: transparent;
+    color: #c9cbd2;
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+    font-weight: normal;
+    text-align: center;
+}
+.combo-box-toggle:hover,
+.combo-box-toggle:active {
+    background: #303238;
+    color: #fff;
+}
+.combo-box-options {
+    display: none;
+    position: absolute;
+    z-index: 100;
+    top: 2.5rem;
+    left: 0;
+    right: 0;
+    box-sizing: border-box;
+    max-height: 14rem;
+    margin-top: 0.25rem;
+    padding: 0.25rem;
+    overflow: auto;
+    border: 0.0625rem solid #41434b;
+    border-radius: 0.5625rem;
+    background: #25262a;
+    color: #f3f4f6;
+    scrollbar-width: thin;
+}
+.combo-box[data-open="true"] > .combo-box-options {
+    display: block;
+}
+.combo-box-options [role="option"] {
+    box-sizing: border-box;
+    min-height: 2rem;
+    padding: 0.375rem 0.625rem;
+    border-radius: 0.375rem;
+    color: #f3f4f6;
+    line-height: 1.25rem;
+    cursor: pointer;
+}
+.combo-box-options [role="option"][data-filtered="true"],
+.combo-box-options .combo-box-no-matches[data-filtered="true"] {
+    display: none;
+}
+.combo-box-options [role="option"]:hover,
+.combo-box-options [role="option"][data-active="true"] {
+    background: #303238;
+}
+.combo-box-options [role="option"][aria-selected="true"] {
+    background: var(--accent);
+    color: #fff;
+}
+.combo-box-options [role="option"][aria-selected="true"]:hover,
+.combo-box-options [role="option"][aria-selected="true"][data-active="true"] {
+    background: var(--accent);
+}
+.combo-box-no-matches {
+    padding: 0.5rem 0.625rem;
+    color: #a9abb4;
+}
+
+/* The template replaces <combo-box> with this wrapper. Repeat the select's
+   row sizing on the replacement node because the original custom tag no
+   longer participates in the flex row after expansion. */
+.settings-profile-bar > .row > .combo-box {
+    flex: 0 0 12.375rem;
+    width: 12.375rem;
+}
+.settings-layout .tab-panel > .box .row > .combo-box {
+    flex: 0 0 13.5rem;
+    width: 13.5rem;
+}
+
+button,
+a.button {
+    display: inline-block;
+    padding: 0.5rem 0.875rem;
+    font-weight: 600;
+    line-height: 1.125rem;
+    text-decoration: none;
+    cursor: pointer;
+}
+button:hover,
+a.button:hover {
+    background: #303238;
+}
+button.primary,
+a.button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+button.danger {
+    color: #ff8a85;
+}
+/* Icon that leads a button's label. */
+button img,
+a img {
+    display: inline-block;
+    width: 1.125rem;
+    height: 1.125rem;
+    margin-right: 0.3125rem;
+    vertical-align: middle;
+}
+
+input,
+select,
+.combo-box {
+    display: block;
+    width: 100%;
+}
+select {
+    scrollbar-width: thin;
+    accent-color: var(--accent);
+}
+select > option {
+    display: none;
+    background: #25262a;
+    color: #f3f4f6;
+}
+/* ImHTML paints the UA popup surface because litehtml does not lay out
+   display:none options. The popup reads the select's standard accent-color;
+   these rules still own the option's text state. */
+select > option[aria-selected="true"],
+select > option[data-hovered="true"] {
+    color: #fff;
+}
+select > option[data-hovered="true"] {
+    background: #303238;
+}
+
+input[type="checkbox"] {
+    appearance: none;
+    display: inline-block;
+    width: 1.25rem;
+    height: 1.25rem;
+    min-height: 0;
+    /* Never let a checkbox butt up against its label or its neighbours. */
+    margin: 0.125rem 0.5625rem 0.125rem 0.125rem;
+    padding: 0;
+    vertical-align: middle;
+    border: 0.0625rem solid #70727c;
+    border-radius: 0.25rem;
+    background: #242529;
+    color: #fff;
+    text-align: center;
+    line-height: 1.125rem;
+}
+input[type="checkbox"]:checked {
+    background: var(--accent);
+}
+input[type="checkbox"]::after {
+    display: block;
+    content: "✓";
+    color: transparent;
+    font-size: 0.875rem;
+    font-weight: 700;
+    line-height: 1.125rem;
+}
+input[type="checkbox"]:checked::after {
+    color: #fff;
+}
+input[type="range"] {
+    display: block;
+    flex: 1 1 auto;
+    min-width: 2.25rem;
+    /* The shared HTML runtime paints a thin track inside this box; the height
+       is the knob's height. Its colors come from this element's ordinary CSS
+       background, border-color, and color values. */
+    height: 1.125rem;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    /* The backend uses accent-color for the filled track and this ordinary
+       CSS color for the independent white pill thumb. */
+    color: #fff;
+    accent-color: var(--accent);
+}
+
+input[type="checkbox"][role="switch"] {
+    box-sizing: border-box;
+    display: block;
+    flex: 0 0 2.9375rem;
+    /* Match the former custom switch: a 47x20px track with a 2px inset. */
+    width: 2.9375rem;
+    height: 1.25rem;
+    min-height: 1.25rem;
+    margin: 0.125rem;
+    padding: 0.125rem;
+    border: 0;
+    border-radius: 999px;
+    background: #4b4d56;
+}
+
+input[type="checkbox"][role="switch"]:checked {
+    border-color: transparent;
+    background: var(--accent);
+}
+
+input[type="checkbox"][role="switch"]::after {
+    display: block;
+    width: 1.8rem;
+    height: 1rem;
+    margin-left: 0;
+    border-radius: 999px;
+    background: #fff;
+    color: transparent;
+    content: "";
+    font-size: 0;
+    line-height: 1rem;
+    vertical-align: top;
+}
+input[type="checkbox"][role="switch"]:checked::after {
+    margin-left: 0.8875rem;
+}
+
+.auto-texture-table {
+    width: 100%;
+    max-width: 100%;
+    color: #d8d9df;
+    font-size: 1rem;
+}
+.auto-texture-row {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+}
+.auto-texture-cell {
+    box-sizing: border-box;
+    min-width: 0;
+    padding: 0.6875rem 0.5625rem;
+    text-align: right;
+    overflow-wrap: anywhere;
+}
+.auto-texture-cell:nth-child(1) { flex: 0 0 16%; }
+.auto-texture-cell:nth-child(2),
+.auto-texture-cell:nth-child(3) { flex: 0 0 20%; }
+.auto-texture-cell:nth-child(n + 4) { flex: 0 0 11%; }
+.auto-texture-header {
+    color: #b8bac3;
+    background: #2d2f35;
+}
+.auto-texture-list .auto-texture-row {
+    border-top: 0.0625rem solid #373940;
+}
+.auto-texture-cell input {
+    box-sizing: border-box;
+    min-width: 0;
+    max-width: 100%;
+}
+.auto-texture-cell input[type="checkbox"] {
+    margin: 0 auto;
+}
+
+/* Kept for the other views that use a genuine table. */
+table {
+    width: 100%;
+    max-width: 100%;
+    table-layout: fixed;
+    border-collapse: collapse;
+    color: #d8d9df;
+    font-size: 1rem;
+}
+th,
+td {
+    box-sizing: border-box;
+    padding: 0.6875rem 0.5625rem;
+    text-align: right;
+    overflow-wrap: anywhere;
+}
+th {
+    color: #b8bac3;
+    background: #2d2f35;
+}
+td {
+    border-top: 0.0625rem solid #373940;
+}
+th:nth-child(1),
+td:nth-child(1) {
+    width: 16%;
+}
+th:nth-child(2),
+td:nth-child(2),
+th:nth-child(3),
+td:nth-child(3) {
+    width: 20%;
+}
+th:nth-child(n + 4),
+td:nth-child(n + 4) {
+    width: 11%;
+}
+table input {
+    box-sizing: border-box;
+    min-width: 0;
+    max-width: 100%;
+}
+table input[type="checkbox"] {
+    margin: 0 auto;
+}
+
+/* ------------------------------------------------------------ app shell */
+
+.app {
+    display: flex;
+    width: 100%;
+    height: auto;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    box-sizing: border-box;
+}
+
+.sidebar {
+    display: flex;
+    flex: 0 0 8.4375rem;
+    min-width: 0;
+    min-height: 0;
+    overflow: visible;
+}
+
+.sidebar-rail {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+    box-sizing: border-box;
+    padding: 0.5625rem;
+    background: #202126;
+    border: 0.0625rem solid #3a3b42;
+    border-radius: 1rem;
+    overflow: visible;
+}
+
+.window-controls {
+    display: flex;
+    align-items: center;
+    box-sizing: border-box;
+    flex: 0 0 32px;
+    height: 32px;
+    min-height: 32px;
+    margin: 0 0 5px;
+    padding: 8px 5px;
+    overflow: visible;
+}
+
+button.window-button {
+    display: block;
+    flex: 0 0 16px;
+    box-sizing: border-box;
+    width: 16px;
+    height: 16px;
+    min-width: 16px;
+    min-height: 16px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    font-size: 0;
+    line-height: 0;
+    overflow: visible;
+}
+button.window-button img {
+    display: block;
+    width: 16px;
+    height: 16px;
+    margin: 0;
+}
+button.window-button + button.window-button {
+    margin-left: 7px;
+}
+
+.main {
+    display: flex;
+    flex: 1 1 0;
+    box-sizing: border-box;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+    /* Match the spacing used by the map splitters. */
+    padding-left: 0.5625rem;
+}
+
+.content-shell {
+    display: flex;
+    flex: 1 1 0;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+    box-sizing: border-box;
+    background: #1b1c20;
+    border-radius: 1rem;
+    /* Scrolling belongs to .page-centered or the active tab panel. Keeping
+       this shell as a clip-only frame avoids a second scroll viewport and
+       duplicate scroll-state/layout work in litehtml. */
+    overflow: hidden;
+}
+
+.page-centered {
+    display: flex;
+    flex: 1 1 0;
+    height: 0;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+    box-sizing: border-box;
+    align-self: stretch;
+    /* The main content inset already provides the shared layout gap. */
+    padding: 1.125rem 0;
+    overflow: auto;
+}
+
+/* Match the compact native select scrollbar. `scrollbar-width` is not
+   inherited in browser CSS, so each scrolling box opts into the thin variant
+   explicitly. */
+.page-centered,
+.tab-panel,
+.tree-panel,
+.file-grid {
+    scrollbar-width: thin;
+}
+.page-centered > * {
+    flex: 0 0 auto;
+}
+
+.page-header {
+    display: flex;
+    flex: 0 0 auto;
+    justify-content: space-between;
+    margin-bottom: 1.125rem;
+}
+.page-header h1 {
+    margin: 0;
+}
+
+/* ----------------------------------------------------------- navigation */
+
+.nav {
+    display: flex;
+    flex-direction: column;
+}
+.nav-footer {
+    margin-top: auto;
+}
+
+/* Sidebar entry, panel tab and icon button are one control: a 2.25rem box whose
+   content is a 1.125rem line (icon and/or label) centred by the padding.
+   These stay display:block on purpose; flex containers on <button> are laid
+   out wrong by this litehtml build (the content lands at the top-left). */
+.nav-link,
+.tab,
+button.icon {
+    display: block;
+    box-sizing: border-box;
+    height: 2.25rem;
+    min-height: 2.25rem;
+    padding: 0.5rem 0.5625rem;
+    border: 0.0625rem solid transparent;
+    border-radius: 0.5625rem;
+    background: transparent;
+    color: #c7c9d1;
+    font-weight: 400;
+    line-height: 1.125rem;
+    white-space: nowrap;
+    text-decoration: none;
+    cursor: pointer;
+}
+.nav-link {
+    width: 100%;
+    /* Separates the sidebar entries from each other. */
+    margin: 0.375rem 0;
+}
+.tab {
+    flex: 1 1 auto;
+    margin: 0;
+    min-width: 0;
+    overflow: hidden;
+    color: #b9bbc4;
+    text-align: center;
+}
+.tab + .tab {
+    margin-left: 0.4375rem;
+}
+button.icon {
+    width: 2.25rem;
+    min-width: 2.25rem;
+    padding-left: 0;
+    padding-right: 0;
+    border-color: #41434b;
+    background: #25262a;
+    margin: 0.125rem;
+    text-align: center;
+}
+button.icon img {
+    width: 1.125rem;
+    height: 1.125rem;
+    display: block;
+    margin: 0 auto;
+}
+.maps-regex-button {
+    font-weight: 600;
+}
+
+.nav-link:hover,
+.tab:hover {
+    background: #303238;
+    color: #fff;
+}
+
+.tabs {
+    display: flex;
+    flex: 0 0 auto;
+    /* One line only: a wrapped tab would fall outside the fixed-height row. */
+    flex-wrap: nowrap;
+    align-items: flex-start;
+    width: 100%;
+    height: 2.25rem;
+    max-height: 2.25rem;
+    margin-bottom: 0.875rem;
+}
+
+.tab-panels {
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+    flex: 1 1 0;
+    flex-direction: column;
+    /* The active child owns scrolling; hidden panels are display:none. */
+    overflow: hidden;
+}
+.tab-panel {
+    min-width: 0;
+    min-height: 0;
+    flex: 1 1 0;
+    overflow: auto;
+}
+/* ------------------------------------------------------ boxes and rows */
+
+.box {
+    box-sizing: border-box;
+    margin-bottom: 0.875rem;
+    padding: 0.875rem 1.125rem;
+    background: #242529;
+    border: 0.0625rem solid #3a3b42;
+    border-radius: 1rem;
+}
+
+/* A row of controls: label/copy on the left, control on the right. */
+.row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    margin: 0;
+    padding: 0.875rem 0;
+    border-bottom: 0.0625rem solid #373940;
+    color: #d8d9df;
+}
+.settings-box {
+    padding: 0.5rem 0;
+}
+.box > .row:last-child {
+    border-bottom: 0;
+}
+/* A box that is itself a single row keeps the box's own spacing. */
+.box.row {
+    margin-bottom: 0.875rem;
+    padding: 1.125rem;
+    border-bottom: 0;
+    justify-content: space-between;
+}
+
+/* Title + subtitle block. Only takes the free space when it sits in a row;
+   elsewhere it must not push its siblings out of the container. */
+.copy {
+    min-width: 0;
+}
+.row > .copy {
+    flex: 1 1 11.25rem;
+}
+.copy b,
+.copy small {
+    display: block;
+}
+.copy small {
+    margin-top: 0.25rem;
+}
+
+.row > label {
+    flex: 1 1 11.25rem;
+    min-width: 0;
+    margin: 0;
+}
+.row > input,
+.row > select {
+    flex: 0 1 13.5rem;
+    max-width: 100%;
+    min-width: 0;
+    width: auto;
+}
+.row > img {
+    flex: 0 0 auto;
+    margin-right: 0.875rem;
+}
+
+.button-row {
+    display: flex;
+    flex-wrap: wrap;
+    margin-top: 1.125rem;
+}
+.button-row button + button {
+    margin-left: 0.4375rem;
+}
+
+.settings-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+/* Rows are selected by clicking them; the Remove button above the list acts on
+   the selection, the way the C# lists do. */
+.settings-list > li.selected .settings-box,
+.settings-list > li.selected > .row {
+    background: #2d3038;
+    border-radius: 0.5625rem;
+}
+.settings-list > li > .row {
+    padding: 0.5rem 0;
+}
+.settings-list > li:last-child > .row,
+.settings-list > li:last-child .settings-box {
+    border-bottom: 0;
+}
+
+.expandable-header {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    padding-bottom: 0.875rem;
+    margin-bottom: 0.875rem;
+    border-bottom: 0.0625rem solid #373940;
+    color: #f3f4f6;
+    font-size: 1rem;
+    font-weight: 600;
+}
+.expandable-header img {
+    margin-right: 0.6875rem;
+}
+.expandable-header small {
+    flex: 1 1 13.5rem;
+    min-width: 0;
+    margin-left: 0.5625rem;
+    font-weight: 400;
+}
+
+/* ------------------------------------------------------------ maps page */
+
+.maps-page {
+    overflow: hidden;
+}
+/* Map panels fill a managed flex layout; their separation comes from the
+   layout gaps and splitters, not from the page-wide box margin. */
+.maps-page .box {
+    margin-bottom: 0;
+}
+
+.maps-layout,
+.maps-top {
+    display: flex;
+    flex: 1 1 0;
+    box-sizing: border-box;
+    min-width: 0;
+    min-height: 0;
+}
+.maps-layout {
+    flex-direction: column;
+}
+
+.viewer-panel {
+    display: flex;
+    flex: 3 1 0;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+    padding: 0;
+    overflow: hidden;
+    border-radius: 1rem;
+}
+.viewport-wrap {
+    display: flex;
+    flex: 1 1 0;
+    box-sizing: border-box;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+    padding: 0;
+    background: #121318;
+    border-radius: inherit;
+}
+
+noorray-viewport {
+    display: block;
+    flex: 1 1 0;
+    width: 100%;
+    height: auto;
+    min-width: 0;
+    min-height: 0;
+    border-radius: inherit;
+}
+
+.right-panel {
+    display: flex;
+    flex: 0 0 18.75rem;
+    box-sizing: border-box;
+    min-width: 13.5rem;
+    min-height: 0;
+    flex-direction: column;
+    padding: 0.875rem;
+    overflow: hidden;
+}
+
+.right-panel .tabs {
+    box-sizing: border-box;
+    height: auto;
+    max-height: none;
+    min-width: 0;
+    max-width: 100%;
+    flex-wrap: nowrap;
+    overflow: hidden;
+}
+.right-panel .tab {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    height: auto;
+    min-height: 2.25rem;
+    padding-left: 0.3125rem;
+    padding-right: 0.3125rem;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+.right-panel #maps-tab-slot {
+    box-sizing: border-box;
+    flex: 1 1 0;
+    height: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+.right-panel #maps-tab-slot > .tab-panel {
+    display: flex;
+    flex: 1 1 0;
+    height: 0;
+    min-height: 0;
+    box-sizing: border-box;
+    max-width: 100%;
+    flex-direction: column;
+    overflow: auto;
+}
+#maps-panel-environment,
+#maps-panel-renderer,
+#maps-panel-camera {
+    overflow: auto;
+}
+noorray-panel {
+    display: block;
+    flex: 1 1 0;
+    width: 100%;
+    height: auto;
+    min-width: 0;
+    min-height: 0;
+}
+
+.control-group {
+    padding-bottom: 0.4375rem;
+    margin-bottom: 0.4375rem;
+    border-bottom: 0.0625rem solid #373940;
+}
+.control-group > label {
+    margin: 0 0 0.125rem;
+}
+.range-control,
+.range-line {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+}
+.range-control > input[type="range"],
+.range-line > input[type="range"] {
+    width: auto;
+    flex: 1 1 0;
+    min-width: 0;
+    margin-right: 0.3125rem;
+}
+.control-group > label > input[type="checkbox"] {
+    margin-right: 0.4375rem;
+}
+label.check-row {
+    display: flex;
+    align-items: center;
+    min-height: 1.5625rem;
+    margin: 0;
+    white-space: nowrap;
+}
+label.check-row > input[type="checkbox"] {
+    flex: 0 0 1.25rem;
+    margin: 0 0.5625rem 0 0;
+}
+.range-line > span {
+    flex: 0 0 1.125rem;
+    color: #b8bac3;
+}
+.range-line {
+    margin: 0;
+}
+.right-panel .control-group > select {
+    width: auto;
+    max-width: 100%;
+}
+.range-value {
+    display: block;
+    /* Keep the slider endpoint at a stable percentage of the row while
+       reserving enough space for the widest displayed value. */
+    flex: 0 0 12%;
+    width: 12%;
+    min-width: 3.9375rem;
+    color: #d8d9df;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.drawer {
+    display: flex;
+    flex: 0 0 13.75rem;
+    box-sizing: border-box;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+    padding: 0.875rem;
+    overflow: hidden;
+}
+.drawer-body {
+    display: flex;
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+    box-sizing: border-box;
+}
+
+.toolbar {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 0.875rem;
+    box-sizing: border-box;
+    min-width: 0;
+}
+.toolbar input {
+    flex: 1 1 13.5rem;
+    min-width: 11.25rem;
+    width: auto;
+}
+.toolbar select {
+    flex: 0 0 9rem;
+    width: 9rem;
+}
+.toolbar small {
+    color: #b0b2bb;
+}
+
+.tree-panel {
+    flex: 0 1 20.25rem;
+    min-width: 11.25rem;
+    margin-right: 0.5625rem;
+    overflow: auto;
+}
+.file-panel {
+    display: flex;
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.breadcrumb {
+    flex: 0 0 auto;
+    display: flex;
+    flex-wrap: wrap;
+    margin-bottom: 0.5625rem;
+    color: #b9bbc4;
+    font-size: 1rem;
+}
+
+/* The grid scrolls itself rather than the panel around it, so the breadcrumb
+   and the status line stay put and the scroll offset the virtualized list is
+   computed from belongs to exactly one element. */
+.file-grid {
+    flex: 1 1 0;
+    min-height: 0;
+    display: block;
+    overflow: auto;
+}
+/* Fixed row geometry is a hard requirement of the virtualization: the browser
+   converts a scroll offset straight into a row index, so a row must be
+   .file-row's height and a tile must be a tile pitch wide, always. */
+.file-grid-rows {
+    display: block;
+}
+.file-row {
+    display: block;
+    height: 7.5rem;
+    white-space: nowrap;
+}
+.file-tile {
+    flex: 0 0 7rem;
+    width: 7rem;
+    height: 7rem;
+    min-height: 7rem;
+    margin: 0 0.5rem 0.5rem 0;
+    padding: 0.416667rem 0.333333rem;
+    text-align: center;
+}
+.file-tile.selected {
+    background: #3a3a3f;
+    border-radius: 0.75rem;
+    color: #fff;
+}
+.file-tile b {
+    display: block;
+    width: 100%;
+    font-size: 1rem;
+    font-weight: 400;
+    line-height: 1.25rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.file-icon {
+    display: block;
+    box-sizing: border-box;
+    width: 4.666667rem;
+    height: 4.666667rem;
+    margin: 0 auto 0.333333rem;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    object-fit: contain;
+}
+
+/* The content browser's rows, tiles and crumbs are <button> elements because
+   that is the element the runtime dispatches clicks from. They therefore have
+   to shed the default button chrome and adopt the row/tile look instead. */
+.tree-panel .outliner-row,
+.file-grid .file-tile,
+.breadcrumb .crumb {
+    height: auto;
+    min-height: 0;
+    margin: 0;
+    border: 0;
+    background: transparent;
+    font-weight: 400;
+    text-align: left;
+    cursor: pointer;
+}
+.tree-panel .outliner-row {
+    /* Not flex: a <button> box does not lay its children out as a flex
+       container here, which stacks the icon above the label. Inline-block
+       children on a block row keep them on one line. */
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    /* Pinned, not a minimum: the virtualized tree turns the scroll offset into
+       a row index, which only holds while every row is the same height. */
+    height: 2.5625rem;
+    min-height: 2.5625rem;
+    padding: 0.4375rem 0.5625rem;
+    font-size: 1rem;
+    white-space: nowrap;
+}
+.tree-panel .outliner-row img,
+.tree-panel .outliner-row span {
+    display: inline-block;
+    vertical-align: middle;
+}
+.tree-panel .outliner-row:hover,
+.file-grid .file-tile:hover,
+.breadcrumb .crumb:hover {
+    background: #2b2d33;
+}
+.tree-panel .outliner-row.selected,
+.tree-panel .outliner-row.selected:hover {
+    background: var(--accent);
+    color: #fff;
+}
+.file-grid .file-tile {
+    display: inline-block;
+    vertical-align: top;
+    box-sizing: border-box;
+    flex: 0 0 7rem;
+    width: 7rem;
+    height: 7rem;
+    min-height: 7rem;
+    margin: 0 0.5rem 0.5rem 0;
+    padding: 0.416667rem 0.333333rem;
+    border: 0.0625rem solid transparent;
+    border-radius: 0.75rem;
+    text-align: center;
+    overflow: hidden;
+}
+.file-grid .file-tile.selected,
+.file-grid .file-tile.selected:hover {
+    background: #3a3a3f;
+    color: #fff;
+}
+.breadcrumb .crumb {
+    padding: 0.125rem 0.4375rem;
+    border-radius: 0.4375rem;
+    color: #b9bbc4;
+    font-size: 1rem;
+}
+.breadcrumb .crumb.current {
+    color: #f3f4f6;
+}
+.browser-status {
+    flex: 0 0 auto;
+    display: block;
+    margin-top: 0.5625rem;
+    color: #858791;
+    font-size: 0.9375rem;
+}
+
+.outliner-row {
+    display: flex;
+    align-items: center;
+    min-height: 2.5625rem;
+    padding: 0.4375rem 0.5625rem;
+    border-radius: 0.5625rem;
+    color: #d8d9df;
+    font-size: 1rem;
+}
+.outliner-row img {
+    margin-right: 0.5625rem;
+}
+.tree-panel .outliner-row .tree-expander,
+.tree-panel .outliner-row .tree-expander-spacer {
+    width: 1rem;
+    height: 1rem;
+    margin-right: 0.375rem;
+}
+.tree-panel .outliner-row .tree-expander-spacer {
+    box-sizing: border-box;
+}
+.tree-panel .outliner-row .tree-folder-icon {
+    width: 1.25rem;
+    height: 1.25rem;
+    margin-right: 0.5625rem;
+}
+.outliner-row small {
+    display: block;
+    color: #858791;
+}
+.outliner-row.selected {
+    background: var(--accent);
+    color: #fff;
+}
+.outliner-row.indent {
+    padding-left: 2rem;
+}
+
+splitter {
+    display: block;
+    flex: 0 0 0.5625rem;
+}
+
+/* -------------------------------------------------------- settings page */
+
+/* The switched panels scroll; the profile bar under them does not. */
+.settings-page {
+    display: flex;
+    flex: 1 1 0;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.settings-profile-bar {
+    flex: 0 0 auto;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0.3125rem 1.125rem;
+}
+.settings-profile-bar .row {
+    border-bottom: 0;
+}
+.settings-profile-bar > .row > .combo-box {
+    flex: 0 0 12.375rem;
+}
+.settings-profile-bar button.icon {
+    flex: 0 0 auto;
+    margin-right: 0.4375rem;
+}
+
+.settings-layout {
+    display: flex;
+    flex: 1 1 0;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+.settings-sidebar {
+    flex: 0 0 8.4375rem;
+    /* The main content inset supplies the left gap. */
+    margin: 0 0 0.5625rem;
+}
+.settings-sidebar + #settings-tab-slot {
+    width: 0;
+    flex: 1 1 0;
+    box-sizing: border-box;
+    min-width: 0;
+    align-self: stretch;
+    padding: 0.5625rem;
+    padding-right: 0;
+    overflow: hidden;
+}
+.settings-layout .tab-panel {
+    display: flex;
+    flex: 1 1 auto;
+    align-self: stretch;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    flex-direction: column;
+    overflow: auto;
+}
+.settings-layout .tab-panel > .box {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    flex: 0 0 auto;
+}
+.settings-layout .tab-panel > .box .row {
+    width: 100%;
+    min-width: 0;
+}
+.settings-layout .tab-panel > .box .row > input {
+    flex: 1 1 11.25rem;
+    min-width: 0;
+    max-width: 100%;
+}
+/* Switches are compact trailing controls, unlike the text inputs handled by
+   the rule above. Keep the former custom switch width in settings rows. */
+.settings-layout .tab-panel > .box .row > input[type="checkbox"][role="switch"] {
+    flex: 0 0 2.9375rem;
+    width: 2.9375rem;
+    min-width: 2.9375rem;
+    max-width: 2.9375rem;
+}
+/* A dropdown keeps a fixed width so the title beside it, not the control,
+   absorbs the free space in the row. */
+.settings-layout .tab-panel > .box .row > select,
+.settings-layout .tab-panel > .box .row > .combo-box {
+    flex: 0 0 13.5rem;
+    min-width: 0;
+    max-width: 100%;
+}
+/* The field that carries the row's real content takes the remaining width;
+   the ones beside it stay at their natural size. */
+.settings-layout .tab-panel > .box .row > input.grow {
+    flex: 3 1 11.25rem;
+}
+.settings-layout .tab-panel > .box .row > input.wide {
+    flex: 1 1 27rem;
+}
+/* A row's trailing button must not be squeezed by the field before it. */
+.settings-layout .tab-panel > .box .row > button {
+    flex: 0 0 auto;
+    margin-left: 0.4375rem;
+}
+
+#maps-tab-slot,
+#settings-tab-slot {
+    display: flex;
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+    /* The selected .tab-panel is the only scroll owner inside the slot. */
+    overflow: hidden;
+}
+
+/* ----------------------------------------------------------- about page */
+
+/* A flex row placed straight inside the scrolling page does not get the
+   scrollbar gutter subtracted here, so reserve it. */
+.about-top {
+    box-sizing: border-box;
+    padding-right: 1.125rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    margin-bottom: 1.4375rem;
+}
+.about-mark {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    min-width: 0;
+}
+.about-icon {
+    display: flex;
+    margin-right: 1.125rem;
+    align-items: center;
+    justify-content: center;
+    width: 4.5rem;
+    height: 4.5rem;
+    border-radius: 1.125rem;
+    background: var(--accent);
+    color: #fff;
+    font-size: 2.25rem;
+}
+.author {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    align-items: flex-end;
+    text-align: right;
+}
+.author b {
+    margin-bottom: 0.4375rem;
+    white-space: nowrap;
+}
+/* --------------------------------------------------------- interaction */
+
+/* Accent is reserved for interaction: the selected navigation entry, tab or
+   tile, and anything being pressed. */
+/* Keep persistent selection styling separate from transient :active rules.
+   litehtml treats an invalid selector in a selector list as invalidating the
+   whole list, which otherwise makes the startup tab state invisible. */
+.nav-link.active,
+.tab.active {
+    background: #3b9c52;
+    color: #fff;
+}
+.nav-link:active,
+.tab:active,
+button:not(.window-button):active,
+a.button:active {
+    background: #3b9c52;
+    color: #fff;
+}

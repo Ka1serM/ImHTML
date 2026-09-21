@@ -1,0 +1,16 @@
+<div class="combo-box" id="{{ id }}-combo" data-combobox="true" data-combobox-id="{{ id }}" data-searchable="{% if exists("searchable") %}{{ searchable }}{% else %}true{% endif %}" data-open="false">
+  <input
+    type="text"
+        id="{{ id }}"
+        {% if exists("name") %}name="{{ name }}"{% endif %}
+    role="combobox"
+    aria-label="{% if exists("aria-label") %}{{ aria-label }}{% else %}{{ id }}{% endif %}"
+    aria-autocomplete="list"
+    aria-expanded="false"
+    aria-controls="{{ id }}-options"
+    data-combobox-input="true"
+    {% if exists("placeholder") %}placeholder="{{ placeholder }}"{% endif %}
+  />
+  <button type="button" id="{{ id }}-toggle" class="combo-box-toggle" data-combobox-toggle="{{ id }}" aria-label="Open options" tabindex="-1"><span aria-hidden="true">⌄</span></button>
+  <div id="{{ id }}-options" class="combo-box-options" data-combobox-list="{{ id }}" role="listbox" aria-label="{% if exists("aria-label") %}{{ aria-label }} options{% else %}{{ id }} options{% endif %}"></div>
+</div>

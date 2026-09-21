@@ -1,0 +1,23 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# ImHTML links dependencies the embedding project owns. An installed tree can
+# only be consumed if those packages are findable too, so report a clear error
+# rather than failing at link time.
+foreach(_imhtml_dependency imgui litehtml)
+    if(NOT TARGET ${_imhtml_dependency})
+        find_package(${_imhtml_dependency} QUIET)
+    endif()
+    if(NOT TARGET ${_imhtml_dependency})
+        set(ImHTML_FOUND FALSE)
+        set(ImHTML_NOT_FOUND_MESSAGE
+            "ImHTML requires the target '${_imhtml_dependency}'. Add it to your build "
+            "(or make it findable with find_package) before find_package(ImHTML).")
+        return()
+    endif()
+endforeach()
+
+include("${CMAKE_CURRENT_LIST_DIR}/ImHTMLTargets.cmake")
+
+check_required_components(ImHTML)

@@ -1,89 +1,183 @@
-cmake_minimum_required(VERSION 3.14)
-project(ImGui_GLFW_OpenGL3_Example)
+cmake_minimum_required(VERSION 3.20)
+project(ImHTML VERSION 0.1.0 LANGUAGES CXX)
 
-# Enable export commands
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+# ImHTML ships two targets:
+#
+#   ImHTML::Core - the framework. Draws through an ImGui draw list, lays out
+#                  through litehtml, owns no window and no render loop.
+#   ImHTML::App  - an optional shell on top of Core (font setup, SVG image
+#                  cache, fragments, theme). It adds lunasvg and nothing else.
+#
+# Neither target links a windowing library. ImHTML never creates a window, reads
+# no display metrics of its own, and calls no platform API: the host installs
+# the two optional services (open a URL, toggle IME) through SetPlatformHooks.
+#
+# Dependencies are injected by the embedding project, which keeps ImHTML out of
+# the business of choosing versions. Every required target must exist before
+# this directory is added.
 
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+option(IMHTML_BUILD_APP "Build the optional ImHTML::App shell (needs lunasvg)" ON)
+option(IMHTML_BUILD_TESTS "Build the ImHTML test suites" OFF)
+# Installing exports ImHTML's link interface, which only works if the injected
+# dependency targets are themselves installed and exported. That is true when
+# ImHTML is built and installed on its own, and usually false when it is one
+# add_subdirectory inside a larger build — so the default follows that.
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    set(IMHTML_INSTALL_DEFAULT ON)
+else()
+    set(IMHTML_INSTALL_DEFAULT OFF)
+endif()
+option(IMHTML_INSTALL "Generate install and package rules for ImHTML" ${IMHTML_INSTALL_DEFAULT})
 
-include(FetchContent)
+# Projects vendor dependencies under different target names, so they are named
+# by variable rather than hardcoded.
+set(IMHTML_LUNASVG_TARGET "lunasvg::lunasvg" CACHE STRING "CMake target providing lunasvg to ImHTML::App")
 
-# Fetch GLFW
-FetchContent_Declare(
-    glfw
-    GIT_REPOSITORY https://github.com/glfw/glfw.git
-    GIT_TAG        3.4
-)
-FetchContent_MakeAvailable(glfw)
-
-# Fetch GL3W
-FetchContent_Declare(
-    glad
-    GIT_REPOSITORY https://github.com/Dav1dde/glad.git
-)
-FetchContent_MakeAvailable(glad)
-
-# Fetch ImGui
-FetchContent_Declare(
-    imgui
-    GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG        v1.92.6
-)
-FetchContent_MakeAvailable(imgui)
-
-set(IMGUI_SRC
-    ${imgui_SOURCE_DIR}/imgui.cpp
-    ${imgui_SOURCE_DIR}/imgui_demo.cpp
-    ${imgui_SOURCE_DIR}/imgui_draw.cpp
-    ${imgui_SOURCE_DIR}/imgui_tables.cpp
-    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
-)
-
-# Download and setup litehtml
-FetchContent_Declare(
-  litehtml
-  GIT_REPOSITORY https://github.com/litehtml/litehtml.git
-  GIT_TAG 8836bc1bc35ca0cfd71dc0386ef841d5cbc3bd5e
-)
-set(LITEHTML_BUILD_TESTING OFF CACHE BOOL "Skip building tests" FORCE)
-FetchContent_MakeAvailable(litehtml)
-
-if(TARGET litehtml)
-  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang")
-    target_compile_options(litehtml PRIVATE
-      -Wno-error
-      -Wno-reorder-ctor
-      -Wno-switch
-    )
-  elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    target_compile_options(litehtml PRIVATE -Wno-error -Wno-reorder -Wno-switch)
-  endif()
+# The list API takes nlohmann/json values, so that header is public. Projects
+# that already vendor nlohmann can point at their own target; otherwise inja
+# brings its bundled copy along.
+if(NOT IMHTML_JSON_TARGET)
+    if(TARGET nlohmann_json::nlohmann_json)
+        set(IMHTML_JSON_TARGET nlohmann_json::nlohmann_json)
+    else()
+        set(IMHTML_JSON_TARGET pantor::inja)
+    endif()
 endif()
 
-add_executable(imhtml ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp ${CMAKE_CURRENT_SOURCE_DIR}/imhtml.cpp ${IMGUI_SRC})
+set(IMHTML_CORE_DEPENDENCIES imgui litehtml pantor::inja ${IMHTML_JSON_TARGET})
+if(IMHTML_BUILD_APP)
+    list(APPEND IMHTML_APP_DEPENDENCIES ${IMHTML_LUNASVG_TARGET})
+endif()
 
-# Include directories
-target_include_directories(imhtml PRIVATE
-    ${imgui_SOURCE_DIR}
-    ${imgui_SOURCE_DIR}/backends
-    ${glfw_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../
-    ${glad_SOURCE_DIR}/include
+foreach(dependency IN LISTS IMHTML_CORE_DEPENDENCIES IMHTML_APP_DEPENDENCIES)
+    if(NOT TARGET ${dependency})
+        message(FATAL_ERROR
+            "ImHTML requires the CMake target '${dependency}'. Provide it before "
+            "add_subdirectory(ImHTML), or turn off IMHTML_BUILD_APP if you only need the core.")
+    endif()
+endforeach()
+
+#
+# Core
+#
+
+add_library(ImHTML
+    src/core.cpp
+    src/app/theme.cpp
+    src/document.cpp
+    src/scroll/scroll_state.cpp
+    src/template/templates.cpp
+    src/version.cpp
+)
+add_library(ImHTML::Core ALIAS ImHTML)
+# Kept so existing `ImHTML::ImHTML` links keep working.
+add_library(ImHTML::ImHTML ALIAS ImHTML)
+
+target_compile_features(ImHTML PUBLIC cxx_std_23)
+set_target_properties(ImHTML PROPERTIES
+    VERSION ${PROJECT_VERSION}
+    SOVERSION ${PROJECT_VERSION_MAJOR}
+    EXPORT_NAME Core
 )
 
-# Link libraries
-target_link_libraries(imhtml PRIVATE glfw OpenGL::GL litehtml glad)
+target_include_directories(ImHTML
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
 
-# Find OpenGL
-find_package(OpenGL REQUIRED)
+# inja is an implementation detail: it never appears in a public header. Only
+# the JSON value type it is built on does.
+target_link_libraries(ImHTML
+    PUBLIC imgui litehtml ${IMHTML_JSON_TARGET}
+    PRIVATE pantor::inja
+)
 
-# Define IMHTML_DEBUG_PRINTF
-target_compile_definitions(imhtml PRIVATE IMHTML_DEBUG_PRINTF)
+#
+# App shell
+#
 
-# On macOS, link frameworks
-if(APPLE)
-    target_link_libraries(imhtml PRIVATE "-framework Cocoa" "-framework IOKit" "-framework CoreVideo")
+if(IMHTML_BUILD_APP)
+    add_library(ImHTMLApp
+        src/app/window.cpp
+        src/app/image_cache.cpp
+    )
+    add_library(ImHTML::App ALIAS ImHTMLApp)
+
+    set_target_properties(ImHTMLApp PROPERTIES
+        VERSION ${PROJECT_VERSION}
+        SOVERSION ${PROJECT_VERSION_MAJOR}
+        EXPORT_NAME App
+    )
+
+    target_include_directories(ImHTMLApp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(ImHTMLApp
+        PUBLIC ImHTML
+        PRIVATE ${IMHTML_LUNASVG_TARGET}
+    )
+endif()
+
+#
+# Tests
+#
+
+if(IMHTML_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
+
+#
+# Install and package
+#
+
+if(IMHTML_INSTALL)
+    include(GNUInstallDirs)
+    include(CMakePackageConfigHelpers)
+
+    set(IMHTML_INSTALL_TARGETS ImHTML)
+    if(IMHTML_BUILD_APP)
+        list(APPEND IMHTML_INSTALL_TARGETS ImHTMLApp)
+    endif()
+
+    install(TARGETS ${IMHTML_INSTALL_TARGETS}
+        EXPORT ImHTMLTargets
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    )
+
+    # Headers keep their imhtml/ prefix so consumers write <imhtml/app.hpp> and
+    # nothing flat lands on their include path.
+    install(DIRECTORY include/imhtml
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+        FILES_MATCHING PATTERN "*.hpp"
+    )
+
+    install(EXPORT ImHTMLTargets
+        FILE ImHTMLTargets.cmake
+        NAMESPACE ImHTML::
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ImHTML
+    )
+
+    configure_package_config_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ImHTMLConfig.cmake.in
+        ${CMAKE_CURRENT_BINARY_DIR}/ImHTMLConfig.cmake
+        INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ImHTML
+    )
+    write_basic_package_version_file(
+        ${CMAKE_CURRENT_BINARY_DIR}/ImHTMLConfigVersion.cmake
+        VERSION ${PROJECT_VERSION}
+        COMPATIBILITY SameMajorVersion
+    )
+    install(FILES
+        ${CMAKE_CURRENT_BINARY_DIR}/ImHTMLConfig.cmake
+        ${CMAKE_CURRENT_BINARY_DIR}/ImHTMLConfigVersion.cmake
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ImHTML
+    )
+    install(FILES LICENSE THIRD_PARTY_NOTICES.md
+        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/licenses/ImHTML
+    )
 endif()

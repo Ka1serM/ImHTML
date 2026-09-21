@@ -1,0 +1,137 @@
+<div class="page-header">
+    <div class="copy"><h1>Provider</h1></div>
+</div>
+<div class="box">
+    <settings-box
+        icon="assets/icons/fluent/folder.svg"
+        title="Export Path"
+        subtitle="Folder the exported files are written to."
+    >
+        <input
+            id="export-path"
+            name="export-path"
+            type="text"
+            aria-label="Export Path"
+            placeholder="No folder selected"
+        />
+        <button id="browse-export-path" data-action="browse-export-path" aria-label="Browse for the export path">
+            Browse
+        </button>
+    </settings-box>
+    <settings-box
+        icon="assets/icons/fluent/folder.svg"
+        title="Archive Path"
+        subtitle="Pak folder of the game, e.g. Game/Content/Paks."
+    >
+        <input
+            id="archive-path"
+            name="archive-path"
+            type="text"
+            aria-label="Archive Path"
+            placeholder="No folder selected"
+        />
+        <button
+            id="browse-archive-path"
+            data-action="browse-archive-path"
+            aria-label="Browse for the archive path"
+        >
+            Browse
+        </button>
+    </settings-box>
+    <settings-box
+        icon="assets/icons/fluent/document.svg"
+        title="Mappings File"
+        subtitle="Mappings (.usmap) file. Required for all UE5+ games."
+    >
+        <input
+            id="mappings-path"
+            name="mappings-path"
+            type="text"
+            aria-label="Mappings File"
+            placeholder="No file selected"
+        />
+        <button
+            id="browse-mappings-path"
+            data-action="browse-mappings-path"
+            aria-label="Browse for the mappings file"
+        >
+            Browse
+        </button>
+    </settings-box>
+</div>
+<div class="box">
+    <div class="expandable-header">
+        <img src="assets/icons/fluent/folder_list.svg" alt="" /><b
+            >Extra Archive Paths</b
+        ><small>Add or remove extra archive paths</small>
+    </div>
+    <div class="button-row">
+        <button id="add-archive" data-action="add-archive" aria-label="Add an extra archive path">
+            <img src="assets/icons/fluent/add.svg" alt="" />Add
+        </button>
+        <button
+            id="remove-archive"
+            data-action="remove-archive"
+            class="danger"
+            aria-label="Remove the selected archive paths"
+        >
+            <img src="assets/icons/fluent/remove.svg" alt="" />Remove
+        </button>
+    </div>
+    <ul id="extra-archives" class="settings-list" role="listbox" aria-multiselectable="true"></ul>
+        <template id="extra-archives-template">
+            <li class="" role="option" aria-selected="false">
+                <settings-box
+                    icon="assets/icons/fluent/folder.svg"
+                    title="Archive Path"
+                >
+                    <input
+                        data-field="path"
+                        name="path"
+                        type="text"
+                        value=""
+                        aria-label="Extra archive path"
+                        placeholder="No folder selected"
+                    />
+                    <button
+                        data-field="browse"
+                        data-action="browse-archive-path"
+                        aria-label="Browse for this archive path"
+                    >
+                        Browse
+                    </button>
+                </settings-box>
+            </li>
+        </template>
+</div>
+<div class="box">
+    <settings-box
+        icon="assets/icons/fluent/translate.svg"
+        title="Game Language"
+        subtitle="Language the game's localized text is read in."
+        ><select id="game-language" name="game-language" aria-label="Game Language"></select
+    ></settings-box>
+    <settings-box
+        icon="assets/icons/fluent/flashlight.svg"
+        title="Light Units"
+        subtitle="Unit used when a light does not specify one."
+        ><select id="light-units" name="light-units" aria-label="Light Units"></select
+    ></settings-box>
+    <settings-box
+        icon="assets/icons/fluent/gamepad.svg"
+        title="Texture Platform"
+        subtitle="Platform the game's textures were cooked for."
+        ><select id="texture-platform" name="texture-platform" aria-label="Texture Platform"></select
+    ></settings-box>
+    <settings-box
+        icon="assets/icons/fluent/games.svg"
+        title="Unreal Version"
+        subtitle="Engine version of the game. Some games need their own entry."
+        ><combo-box
+            id="unreal-version"
+            name="unreal-version"
+            aria-label="Unreal Version"
+            placeholder="Custom version..."
+        ></combo-box
+    ></settings-box>
+</div>

@@ -1,0 +1,156 @@
+<div class="content-shell maps-page" data-switcher="maps">
+    <div class="maps-layout">
+        <div class="maps-top">
+            <section class="box viewer-panel">
+                <div class="viewport-wrap"><noorray-viewport></noorray-viewport></div>
+            </section>
+
+            <splitter
+                id="maps-right-panel-splitter"
+                target="#maps-right-panel"
+                orientation="vertical"
+                min-width="240"
+                max-width="560"
+                default-width="300"
+            ></splitter>
+
+            <aside class="box right-panel" id="maps-right-panel">
+                <div class="tabs" role="tablist">
+                    <a id="maps-tab-outliner" class="tab" role="tab" href="#maps-panel-outliner">
+                        Outliner
+                    </a>
+                    <a id="maps-tab-environment" class="tab" role="tab" href="#maps-panel-environment">
+                        Environment
+                    </a>
+                    <a id="maps-tab-renderer" class="tab" role="tab" href="#maps-panel-renderer">
+                        Renderer
+                    </a>
+                    <a id="maps-tab-camera" class="tab" role="tab" href="#maps-panel-camera">Camera</a>
+                    <a id="maps-tab-details" class="tab" role="tab" href="#maps-panel-details">Details</a>
+                </div>
+                <div id="maps-tab-slot" class="tab-panels">
+                    <div
+                        id="maps-panel-outliner"
+                        class="tab-panel"
+                        role="tabpanel"
+                        aria-labelledby="maps-tab-outliner"
+                    ></div>
+                    <div
+                        id="maps-panel-environment"
+                        class="tab-panel"
+                        role="tabpanel"
+                        aria-labelledby="maps-tab-environment"
+                    ></div>
+                    <div
+                        id="maps-panel-renderer"
+                        class="tab-panel"
+                        role="tabpanel"
+                        aria-labelledby="maps-tab-renderer"
+                    ></div>
+                    <div
+                        id="maps-panel-camera"
+                        class="tab-panel"
+                        role="tabpanel"
+                        aria-labelledby="maps-tab-camera"
+                    ></div>
+                    <div
+                        id="maps-panel-details"
+                        class="tab-panel"
+                        role="tabpanel"
+                        aria-labelledby="maps-tab-details"
+                    ></div>
+                </div>
+            </aside>
+        </div>
+
+        <splitter
+            id="maps-drawer-splitter"
+            target="#maps-drawer"
+            orientation="horizontal"
+            min-height="150"
+            max-height="440"
+            default-height="300"
+        ></splitter>
+
+        <section class="box drawer" id="maps-drawer">
+            <div class="toolbar">
+                <input
+                    id="maps-search"
+                    name="maps-search"
+                    type="text"
+                    aria-label="Search files"
+                    placeholder="Search files..."
+                />
+                <button
+                    class="icon maps-regex-button"
+                    id="maps-regex"
+                    data-action="maps-regex"
+                    aria-label="Regular expression"
+                >.*</button>
+                <img-button-square
+                    id="maps-refresh"
+                    data-action="maps-refresh"
+                    icon="assets/icons/fluent/people_search.svg"
+                    aria-label="Rescan the archive"
+                />
+                <small>Send To</small>
+                <select id="maps-export-target" name="maps-export-target"></select>
+                <button id="maps-export" data-action="maps-export" aria-label="Export files">
+                    <img src="assets/icons/fluent/download.svg" alt="" />Export
+                </button>
+                <button id="maps-preview" data-action="maps-preview" aria-label="Preview files">
+                    <img src="assets/icons/fluent/eye.svg" alt="" />Preview
+                </button>
+                <img-button-square
+                    id="maps-clear-preview"
+                    data-action="maps-clear-preview"
+                    icon="assets/icons/fluent/refresh.svg"
+                    aria-label="Clear preview"
+                />
+            </div>
+
+            <template id="maps-tree-template">
+                <button class="outliner-row" id="" title="">
+                    <img class="tree-expander" data-field="expander" src="" alt="" />
+                    <span class="tree-expander-spacer" data-field="spacer"></span>
+                    <img class="tree-folder-icon" data-field="icon" src="" alt="" />
+                    <span data-field="name"></span>
+                </button>
+            </template>
+            <template id="maps-breadcrumb-template">
+                <button class="crumb" id="" title="" data-field="name"></button>
+            </template>
+            <template id="maps-file-template">
+                <button
+                    class="file-tile"
+                    id=""
+                    role="option"
+                    title=""
+                    aria-label=""
+                    data-selectable="true"
+                    aria-selected="false"
+                >
+                    <img class="file-icon" data-field="icon" src="" alt="" /><b data-field="label"></b>
+                </button>
+            </template>
+
+            <div class="drawer-body">
+                <div class="box tree-panel" id="maps-tree">
+                </div>
+
+                <div class="box file-panel">
+                    <div class="breadcrumb" id="maps-breadcrumb"></div>
+                    <div
+                        class="file-grid"
+                        id="maps-files"
+                        role="listbox"
+                        aria-multiselectable="true"
+                    >
+                        <div class="file-grid-rows" id="maps-files-grid"></div>
+                    </div>
+                    <small id="maps-status" class="browser-status"></small>
+                </div>
+            </div>
+        </section>
+    </div>
+</div>
